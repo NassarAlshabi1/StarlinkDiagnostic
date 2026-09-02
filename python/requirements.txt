@@ -1,0 +1,7 @@
+# Desktop development / testing only.
+# On Android, Chaquopy resolves these from its own pip repository
+# (see android/app/build.gradle.kts):
+#   grpcio==1.59.3   (prebuilt android wheels, Chaquopy repo)
+#   protobuf==4.25.3 (pure-python wheel, PyPI)
+grpcio==1.59.3
+protobuf==4.25.3

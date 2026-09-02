@@ -1,0 +1,129 @@
+# Starlink Diagnostic Pro — V2
+
+تطبيق أندرويد أصلي (Kotlin + Chaquopy + Python) لتشخيص طبق Starlink مباشرة عبر gRPC
+من `192.168.100.1:9200` — بلا خادم وسيط، بلا إنترنت، بلا سحابة.
+
+العميل gRPC مشتق من [starlink-grpc-tools](https://github.com/sparky8512/starlink-grpc-tools)
+**v1.2.5** (الإصدار المنشور الحالي): نفس نداءات `Handle`، نفس أرقام الطلبات، ونفس دلالات
+ring buffer في `history`. انظر `docs/GRPC.md` للتفاصيل والفروق الموثقة.
+
+## الهدف النهائي (اختبار القبول)
+
+```
+APK → Wi-Fi → 192.168.100.1:9200 → gRPC → Dish
+     → GetStatus / GetHistory / Diagnostics → UI
+```
+
+لا تُعتبر V2 مكتملة إلا إذا وصل التطبيق فعلياً إلى الطبق وأظهر التشخيص الفعلي.
+
+## المزايا
+
+| # | الميزة | الشاشة |
+|---|--------|--------|
+| 1 | لوحة رئيسية حقيقية (DISH / SELF-TEST / NETWORK + أزرار) | dashboard |
+| 2 | محرك تشخيص بسلسلة دليل (Self-Test → Code → Component → GPS chain → RF/PHY → Final) | diagnostics |
+| 3 | مراقبة مباشرة بفواصل 1/5/10/30/60 ثانية | live |
+| 4 | قاعدة بيانات محلية `StarlinkDiagnostic.db` + رسوم (Download/Upload/Latency/Loss) | history |
+| 5 | خريطة عتاد 8 مكونات مرتبطة بأكواد gRPC المعلنة | hardware |
+| 6 | صفحة GPS/GNSS تفرّق بين **unavailable / inhibited / hardware failure** | gps |
+| 7 | عارض Raw (Status/History/Alerts/Obstruction/Diagnostics) مع Copy/Export JSON | raw |
+| 8 | تشخيص شبكة قفزة-بقفزة (هاتف → راوتر → طبق TCP 9200 → gRPC → POP) | network |
+| 9 | أوامر الطبق (Restart/Stow/Unstow) مع شاشة تأكيد | control |
+| 10 | تقرير تشخيص PDF احترافي (Starlink_Diagnostic_Report.pdf) | من شاشة التشخيص |
+
+## بنية المشروع
+
+```
+StarlinkDiagnostic/
+├── android/
+│   ├── app/src/main/
+│   │   ├── kotlin/com/starlink/diagnostic/
+│   │   │   ├── bridge/          # PythonBridge (نقطة استدعاء واحدة)
+│   │   │   ├── grpc/            # (محجوز لطبقة الاتصال من جهة Kotlin)
+│   │   │   ├── diagnostics/     # Models + NetworkProber
+│   │   │   ├── history/         # (السجل يُدار من Python sqlite3)
+│   │   │   ├── export/          # ReportGenerator (PDF) + JsonExporter
+│   │   │   └── ui/              # Compose: 11 شاشة + ثيم فضائي + RTL
+│   │   ├── assets/sample/       # عينة جهازك الحقيقية (GPS Code 14)
+│   │   └── AndroidManifest.xml
+│   └── build.gradle.kts
+├── python/                      # مصدر Chaquopy (srcDir("../../python"))
+│   ├── starlink_grpc/           # طبقة الاتصال — مشتقة من v1.2.5
+│   │   └── core.py              # ChannelContext, get_status, get_history,
+│   │                            # history_stats, reboot, set_stow_state …
+│   ├── bridge.py                # نقطة الاستدعاء الوحيدة من Kotlin (rpc)
+│   ├── diagnostics.py           # محرك التشخيص + جدول الأكواد
+│   ├── history.py               # StarlinkDiagnostic.db (sqlite3)
+│   ├── demo_sim.py              # وضع العرض + عينة GPS14
+│   └── requirements.txt
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── GRPC.md
+│   ├── DIAGNOSTICS.md
+│   └── spacex_api_device.proto  # المخطط المثبت (مُحقق ضد protoset)
+└── README.md
+```
+
+> ملفات `spacex_api_device_pb2*.py` مولّدة مسبقاً بـ grpcio-tools 1.59.3
+> (مطابقة لإصدار grpcio المثبت 1.59.3) وتوضع في `python/`.
+
+## البناء
+
+### المتطلبات
+- Android Studio (Hedgehog أو أحدث) + JDK 17
+- `python3` (3.8–3.12) على PATH — يحتاجه Chaquopy وقت البناء (`buildPython`)
+- اتصال إنترنت للمزامنة الأولى (Google Maven + Chaquopy pip repo)
+
+### خطوات
+1. افتح Android Studio → **Open** → مجلد `StarlinkDiagnostic/android`
+2. انتظر مزامنة Gradle (أول مرة تنزّل grpcio للأنرويد من مستودع Chaquopy)
+3. `Run ▶` على الجهاز/المحاكي — أو **Build → Build APK(s)**
+
+### بناء سحابي (بلا تثبيت محلي)
+ارفع المستودع إلى GitHub وأضف workflow:
+
+```yaml
+name: build-apk
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - uses: android-actions/setup-android@v3
+      - run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with: { name: starlink-diagnostic-apk, path: android/app/build/outputs/apk/debug/app-debug.apk }
+```
+
+## اختبار القبول على شبكتك (مهم)
+
+1. وصّل الهاتف بشبكة **راوتر ستارلينك** (Wi-Fi).
+2. افتح التطبيق → ستظهر حالة الاتصال تلقائياً من `get_status`.
+3. افتح **NETWORK** → «فحص المسار الآن»:
+   - `Dish TCP 9200` فشل؟ → المشكلة في المسار (الراوتر/العزل بين العملاء)،
+     راجع ملاحظة README الأصلي: الراوتر غير الخاص بستارلينك قد يتطلب routing
+     إضافياً للوصول إلى 192.168.100.1.
+   - المنفذ مفتوح و`gRPC` فشل؟ → firmware مختلف أو خدمة غير متوقعة —
+     أرسل صفحة **RAW → Status** (Copy JSON) للتحليل.
+4. **تشخيص كامل** → سلسلة الدليل + التقييم النهائي + تقرير PDF.
+5. **مراقبة مباشرة** (اختر 1 ثانية) ثم **السجل** لرؤية الرسوم من القاعدة المحلية.
+
+### بلا طبق؟
+- الإعدادات → «وضع العرض التجريبي» لمحاكاة واقعية.
+- الإعدادات → «تحميل عينة الجهاز الحقيقية (GPS Code 14)» لإعادة إنتاج حالة
+  جهازك: `rev3_proto2` / `2026.08.20.mr85023.1` / Self-Test FAILED / GPS
+  valid=false, sats=0, inhibited=true — ويبني عليها محرك التشخيص نفس
+  الاستنتاج الموثق في `docs/DIAGNOSTICS.md`.
+
+## الخصوصية
+كل شيء محلي: gRPC إلى الطبق على شبكتك المحلية، قاعدة SQLite في ملفات التطبيق
+الخاصة، وتقرير PDF يُولَّد على الجهاز. لا إنترنت ولا تحليلات ولا سحابة.
+
+## الترخيص والإسناد
+- مشتق من starlink-grpc-tools (MIT) — (c) sparky8512 والمساهمون.
+- مخطط البروتوكول مُحقق ضد protoset الطبق (انظر رأس `docs/spacex_api_device.proto`).

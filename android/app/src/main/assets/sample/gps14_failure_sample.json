@@ -1,0 +1,54 @@
+{
+  "_comment": "User device capture reproduced as the bundled V2 sample: hardware rev3_proto2, firmware 2026.08.20.mr85023.1, GPS self-test FAILED (code 14), GPS valid=false, satellites=0, GPS inhibited=true, download 9.67 Mbps, upload 1.24 Mbps, latency 48.2 ms, loss 0%, Ethernet 1000 Mbps, uptime 00:16:28.",
+  "mode": "sample",
+  "name": "gps14",
+  "status": {
+    "state": "CONNECTED",
+    "uptimeS": 988,
+    "deviceInfo": {
+      "id": "ut01-field-sample-000000",
+      "hardwareVersion": "rev3_proto2",
+      "softwareVersion": "2026.08.20.mr85023.1"
+    },
+    "downMbps": 9.67,
+    "upMbps": 1.24,
+    "latencyMs": 48.2,
+    "dropRate": 0.0,
+    "isSnrAboveNoiseFloor": true,
+    "isSnrPersistentlyLow": false,
+    "ethSpeedMbps": 1000,
+    "stowRequested": false,
+    "alertsBitfield": 0,
+    "alertHwCodes": [14],
+    "alerts": {
+      "motorsStuck": false,
+      "thermalShutdown": false,
+      "thermalThrottle": false,
+      "unexpectedLocation": false,
+      "mastNotNearVertical": false,
+      "slowEthernetSpeeds": false,
+      "obstructed": false
+    },
+    "obstruction": {
+      "currentlyObstructed": false,
+      "fractionObstructed": 0.0,
+      "last24hObstructedS": 0,
+      "validS": 86000,
+      "avgProlongedObstructionDurationS": 0.0,
+      "avgProlongedObstructionIntervalS": 0.0,
+      "directionAzimuth": 0.0,
+      "directionElevation": 0.0
+    },
+    "gps": {
+      "verdict": "hardware_failure",
+      "label": "hardware_failure",
+      "valid": false,
+      "sats": 0,
+      "inhibited": true,
+      "inhibitEvidence": { "field": 3, "value": true },
+      "hwCode": 14
+    },
+    "boresightAzimuthDeg": 0.0,
+    "boresightElevationDeg": 0.0
+  }
+}

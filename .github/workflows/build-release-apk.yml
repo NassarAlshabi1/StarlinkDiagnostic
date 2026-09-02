@@ -1,0 +1,90 @@
+name: Build Release APK (arm64)
+
+# Builds a signed release APK for modern devices only:
+#   - arm64-v8a (64-bit ARM) — every modern phone
+#   - Android 8.0+ (minSdk 26)
+# Publishes the APK to a GitHub Release "v<version>" so it can be
+# downloaded and installed directly on the phone.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Assemble signed release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # AGP 8.2 requires JDK 17
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Chaquopy buildPython (resolves prebuilt grpcio/protobuf wheels)
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Read version from build.gradle.kts
+        run: |
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[0-9.]+' android/app/build.gradle.kts | head -1)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "Building Starlink Diagnostic Pro v${VERSION}"
+
+      - name: Build signed release APK (arm64-v8a, Android 8.0+)
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Collect APK
+        run: |
+          mkdir -p output
+          cp android/app/build/outputs/apk/release/*.apk "output/StarlinkDiagnostic-v${VERSION}-arm64-release.apk"
+          ls -la output/
+          sha256sum output/*.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarlinkDiagnostic-v${{ env.VERSION }}-release-apk
+          path: output/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish to GitHub Release (v${{ env.VERSION }})
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "v${VERSION}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Starlink Diagnostic Pro v${VERSION}" \
+              --notes "## Starlink Diagnostic Pro v${VERSION}
+
+          ### APK موقّع للأجهزة الحديثة فقط
+          - **المعمارية**: arm64-v8a (64-bit) — أجهزة حديثة فقط
+          - **أقل إصدار مدعوم**: Android 8.0 (API 26)
+          - **الملف**: \`StarlinkDiagnostic-v${VERSION}-arm64-release.apk\`
+
+          ### طريقة التثبيت
+          1. حمّل الـ APK من قسم Assets أدناه
+          2. اسمح بالتثبيت من مصادر غير معروومة عند الطلب
+          3. وصّل الهاتف بشبكة راوتر Starlink ثم افتح التطبيق
+
+          التطبيق يتصل مباشرة بالطبق عبر gRPC على \`192.168.100.1:9200\` — بدون إنترنت وبدون خادم وسيط."
+          gh release upload "v${VERSION}" output/*.apk --clobber --repo "$GITHUB_REPOSITORY"
+          echo "Release published:"
+          gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" --json name,url,assets --jq '{name, url, assets: [.assets[].name]}'

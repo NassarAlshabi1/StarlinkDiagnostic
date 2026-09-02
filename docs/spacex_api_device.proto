@@ -1,0 +1,156 @@
+// SpaceX Starlink Device gRPC protocol
+// Field numbers verified against the official dish protoset
+// (extracted from generated descriptors of danopstech/starlink_exporter,
+//  cross-checked with juliensimon/starlink-dish and the request names
+//  used by sparky8512/starlink-grpc-tools starlink_grpc.py)
+syntax = "proto3";
+
+package SpaceX.API.Device;
+
+service Device {
+  rpc Handle (Request) returns (Response);
+}
+
+message Request {
+  uint64 id = 1;
+  string target_id = 13;
+  uint64 epoch_id = 14;
+  oneof request {
+    GetStatusRequest get_status = 1004;
+    GetHistoryRequest get_history = 1007;
+    RebootRequest reboot = 1001;
+    DishStowRequest dish_stow = 2002;
+  }
+}
+
+message Response {
+  uint64 id = 1;
+  uint64 api_version = 3;
+  oneof response {
+    DishGetStatusResponse dish_get_status = 2004;
+    DishGetHistoryResponse dish_get_history = 2006;
+    RebootResponse reboot = 1001;
+    DishStowResponse dish_stow = 2002;
+  }
+}
+
+message GetStatusRequest {}
+message GetHistoryRequest {}
+message RebootRequest {}
+message RebootResponse {}
+
+message DishStowRequest {
+  bool unstow = 1;
+}
+message DishStowResponse {}
+
+message DishGetHistoryResponse {
+  uint64 current = 1;
+  repeated float pop_ping_drop_rate = 1001;
+  repeated float pop_ping_latency_ms = 1002;
+  repeated float downlink_throughput_bps = 1003;
+  repeated float uplink_throughput_bps = 1004;
+  repeated float snr = 1005;
+  repeated bool scheduled = 1006;
+  repeated bool obstructed = 1007;
+  repeated uint64 alert_bitmask = 1008;
+  uint64 uptime = 1009;
+  uint64 redirect_start_timestamp = 1010;
+}
+
+message DishGetStatusResponse {
+  SpaceX.API.Device.DeviceInfo device_info = 1;
+  SpaceX.API.Device.DeviceState device_state = 2;
+  float snr = 1001;
+  float seconds_to_first_nonempty_slot = 1002;
+  float pop_ping_drop_rate = 1003;
+  SpaceX.API.Device.DishObstructionStats obstruction_stats = 1004;
+  SpaceX.API.Device.DishAlerts alerts = 1005;
+  SpaceX.API.Device.DishState state = 1006;
+  float downlink_throughput_bps = 1007;
+  float uplink_throughput_bps = 1008;
+  float pop_ping_latency_ms = 1009;
+  bool stow_requested = 1010;
+  float boresight_azimuth_deg = 1011;
+  float boresight_elevation_deg = 1012;
+  SpaceX.API.Device.DishGpsStats gps_stats = 1013;
+  int32 eth_speed_mbps = 1014;
+  bool is_snr_above_noise_floor = 1015;
+  bool is_snr_persistently_low = 1016;
+  repeated SpaceX.API.Device.Alert alerts_hardware = 1017;
+}
+
+message DeviceInfo {
+  string id = 1;
+  string hardware_version = 2;
+  string software_version = 3;
+  string country_code = 4;
+  int32 utc_offset_s = 5;
+  string software_part_number = 6;
+  string generate_time = 7;
+  bool manufacturing_date = 8;
+  string onboard_version = 9;
+  string skipped_version = 10;
+}
+
+message DeviceState {
+  uint64 uptime_s = 1;
+}
+
+message DishObstructionStats {
+  bool currently_obstructed = 5;
+  float fraction_obstructed = 1;
+  float last_24h_obstructed_s = 1006;
+  float valid_s = 4;
+  repeated float wedge_fraction_obstructed = 2;
+  repeated float wedge_abs_fraction_obstructed = 3;
+  float avg_prolonged_obstruction_duration_s = 6;
+  float avg_prolonged_obstruction_interval_s = 7;
+  float last_24h_valid_s = 1007;
+  float obstruction_duration_s = 1008;
+  float obstruction_interval_s = 1009;
+  float direction_azimuth = 1010;
+  float direction_elevation = 1011;
+}
+
+message DishAlerts {
+  bool motors_stuck = 1;
+  bool thermal_shutdown = 2;
+  bool thermal_throttle = 3;
+  bool unexpected_location = 4;
+  bool mast_not_near_vertical = 5;
+  bool slow_ethernet_speeds = 6;
+  bool obstructed = 7;
+}
+
+message DishGpsStats {
+  bool gps_valid = 1;
+  int32 gps_sats = 2;
+}
+
+enum DishState {
+  UNKNOWN = 0;
+  CONNECTED = 1;
+  SEARCHING = 2;
+  BOOTING = 3;
+  THERMAL_SHUTDOWN = 5;
+  MOVING_TO_POSITION = 6;
+  STOWED = 7;
+}
+
+enum Alert {
+  ALERT_NOMINAL = 0;
+  ALERT_THERMAL_SHUTDOWN = 1;
+  ALERT_THERMAL_THROTTLE = 2;
+  ALERT_POWER_SUPPLY_IDLE = 3;
+  ALERT_MAST_NOT_NEAR_VERTICAL = 4;
+  ALERT_UNEXPECTED_LOCATION = 5;
+  ALERT_OBSTRUCTED = 6;
+  ALERT_SLOW_ETHERNET_SPEEDS = 7;
+  ALERT_IS_HEATING = 8;
+  ALERT_UNSAFE_VOLTAGE = 9;
+  ALERT_LAST_CHAIN_NON_IDLE = 10;
+  ALERT_BATTERY_USAGE = 11;
+  ALERT_IDLE_ATTY = 12;
+  ALERT_MOBILITY_HANDOFF = 13;
+}
