@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Diagnostics
+import androidx.compose.material.icons.rounded.Troubleshoot
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.SatelliteAlt
@@ -55,7 +55,7 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
         BottomItem("dashboard", "اللوحة", Icons.Rounded.SatelliteAlt),
         BottomItem("live", "مراقبة", Icons.Rounded.MonitorHeart),
         BottomItem("history", "السجل", Icons.Rounded.History),
-        BottomItem("diagnostics", "تشخيص", Icons.Rounded.Diagnostics),
+        BottomItem("diagnostics", "تشخيص", Icons.Rounded.Troubleshoot),
         BottomItem("more", "المزيد", Icons.Rounded.Widgets),
     )
     val backStack by nav.currentBackStackEntryAsState()

@@ -40,8 +40,7 @@ object NetworkProber {
                 if (a is Inet4Address && !a.isLoopbackAddress) {
                     // prefer wlan (Starlink router connection)
                     val ip = a.hostAddress ?: continue
-                    if (name.startsWith("wlan")) return ip
-                    candidates.add(ip)
+                    if (name.startsWith("wlan")) candidates.add(0, ip) else candidates.add(ip)
                 }
             }
         }

@@ -2,6 +2,7 @@ package com.starlink.diagnostic.bridge
 
 import com.chaquo.python.Python
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.concurrent.Executors

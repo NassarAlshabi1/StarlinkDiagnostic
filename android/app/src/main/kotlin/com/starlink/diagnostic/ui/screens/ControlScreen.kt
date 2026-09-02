@@ -38,6 +38,7 @@ import com.starlink.diagnostic.ui.GlassCard
 import com.starlink.diagnostic.ui.MutedText
 import com.starlink.diagnostic.ui.SkyBlue
 import com.starlink.diagnostic.ui.SkySoft
+import com.starlink.diagnostic.ui.StrongText
 import com.starlink.diagnostic.ui.WarnAmber
 
 @Composable

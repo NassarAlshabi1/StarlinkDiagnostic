@@ -10,7 +10,7 @@ import android.text.BidiFormatter
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
-import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.content.FileProvider
 import com.starlink.diagnostic.R
 import com.starlink.diagnostic.diagnostics.Assessment
@@ -49,7 +49,7 @@ object ReportGenerator {
     )
 
     fun generate(context: Context, input: Input): File {
-        val cairo = ContextCompat.getFont(context, R.font.cairo)
+        val cairo = ResourcesCompat.getFont(context, R.font.cairo)
         val doc = PdfDocument()
         var pageNo = 1
         var page = doc.startPage(
