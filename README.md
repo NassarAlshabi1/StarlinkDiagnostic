@@ -1,4 +1,4 @@
-# Starlink Diagnostic Pro — V2.2
+# Starlink Diagnostic Pro — V2.3
 
 تطبيق أندرويد أصلي (Kotlin + Chaquopy + Python) لتشخيص طبق Starlink مباشرة عبر gRPC
 من `192.168.100.1:9200` — بلا خادم وسيط، بلا إنترنت، بلا سحابة.
@@ -31,6 +31,18 @@ APK → Wi-Fi → 192.168.100.1:9200 → gRPC → Dish
 | 8 | تشخيص شبكة قفزة-بقفزة + أهداف ICMP موسعة (الطبق/الراوتر/محللات عامة) | network |
 | 9 | أوامر الطبق (Restart/Stow/Unstow + تفعيل GPS + جدولة النوم) مع تأكيد | control |
 | 10 | تقرير تشخيص PDF احترافي (Starlink_Diagnostic_Report.pdf) | من شاشة التشخيص |
+
+### إضافات V2.3 — فحص الهاردوير + استخراج الأخطاء + أخطاء GPS
+
+| الميزة | التفصيل |
+|--------|---------|
+| فحص عتاد شامل (`hardware_check`) | تقرير كامل في نداء واحد: هوية الجهاز (board_rev، build، anti-rollback، bootcount…)، جاهزية الأنظمة الست، كل التنبيهات، الحركة، الحرارة، الطاقة، وأدلة إعادة التشغيل — بحكم إجمالي |
+| جاهزية الأنظمة الفرعية (DishReadyStates=1019) | CADY · SCP · L1L2 · XPHY · AAP · RF — بت جاهزية لكل وحدة داخلية كما يعلنها الطبق |
+| أدلة إعادة التشغيل (RebootReason=1032) | 18 سبباً مترجماً (قطع طاقة حراري، موت عملية حرجة، انهيار AAP، نواة متأثرة…) — بصمات الأعطال المتقطعة |
+| سجل أخطاء موحد (`errors_log`) | شاشة تجمع كل عطل معلن من كل المصادر مرتباً بالشدة: 20 تنبيه DishAlerts + رمز الإيقاف + فشل التحديث + المحركات + إعادة التشغيل + الانقطاعات + GPS |
+| سجل أخطاء GPS | أخطاء GPS كبنود مستقلة غير متكافئة: فشل عتاد GPS، NO_SATS_AFTER_TTFF، INHIBITED، NO_FIX، ومرشح PNT فاشل/غير مستقر — مع تفسير وإجراء لكل حالة |
+| شارة أخطاء حية | عداد الأخطاء المعلنة في اللوحة الرئيسية يفتح السجل الموحد بضغطة واحدة |
+| تقرير PDF موسع | أقسام Active Alerts · Subsystems NOT Ready · GPS Error Ledger |
 
 ### إضافات V2.2 — الاحترافية والدقة والشمول
 
@@ -71,7 +83,7 @@ StarlinkDiagnostic/
 │   │   │   ├── diagnostics/     # Models + NetworkProber
 │   │   │   ├── history/         # (السجل يُدار من Python sqlite3)
 │   │   │   ├── export/          # ReportGenerator (PDF) + JsonExporter
-│   │   │   └── ui/              # Compose: 11 شاشة + ثيم فضائي + RTL
+│   │   │   └── ui/              # Compose: 13 شاشة + ثيم فضائي + RTL
 │   │   ├── assets/sample/       # عينة جهازك الحقيقية (GPS Code 14)
 │   │   └── AndroidManifest.xml
 │   └── build.gradle.kts

@@ -47,6 +47,7 @@ import com.starlink.diagnostic.ui.screens.MoreScreen
 import com.starlink.diagnostic.ui.screens.NetworkScreen
 import com.starlink.diagnostic.ui.screens.ObstructionMapScreen
 import com.starlink.diagnostic.ui.screens.RawScreen
+import com.starlink.diagnostic.ui.screens.ErrorsScreen
 import com.starlink.diagnostic.ui.screens.SettingsScreen
 
 private data class BottomItem(
@@ -92,6 +93,7 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
             composable("more") { MoreScreen(vm, nav) }
             composable("hardware") { HardwareScreen(vm) }
             composable("gps") { GpsScreen(vm) }
+            composable("errors") { ErrorsScreen(vm) }
             composable("raw") { RawScreen(vm) }
             composable("network") { NetworkScreen(vm) }
             composable("obstruction") { ObstructionMapScreen(vm) }

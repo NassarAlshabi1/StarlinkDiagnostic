@@ -279,6 +279,31 @@ object ReportGenerator {
             }
         }
 
+        // ── V2.3: active alerts + ready states + GPS error ledger ───────
+        input.status?.let { st ->
+            val hasV23 = st.activeAlerts.isNotEmpty() || st.gps.issues.isNotEmpty() ||
+                st.readyStatesAr.any { it.ready == false }
+            if (hasV23) {
+                newPageIfFooter()
+                sectionTitle("Active Alerts (DishAlerts)")
+                st.activeAlerts.forEach { a ->
+                    kv(a.en, BidiFormatter.getInstance().unicodeWrap(a.ar),
+                        if (a.severity == "hard") RED else AMBER)
+                }
+                val notReady = st.readyStatesAr.filter { it.ready == false }
+                if (notReady.isNotEmpty()) {
+                    sectionTitle("Subsystems NOT Ready")
+                    notReady.forEach { r -> kv(r.en, BidiFormatter.getInstance().unicodeWrap(r.ar), RED) }
+                }
+                sectionTitle("GPS Error Ledger")
+                st.gps.issues.forEach { g ->
+                    kv(g.en, BidiFormatter.getInstance().unicodeWrap(g.ar),
+                        if (g.severity == "hard") RED else AMBER)
+                    g.noteAr?.let { paragraph(BidiFormatter.getInstance().unicodeWrap(it)) }
+                }
+            }
+        }
+
         // ── Footer ──────────────────────────────────────────────────────
         newPageIfFooter()
         fun drawFooter() {

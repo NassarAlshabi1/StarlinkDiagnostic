@@ -1,6 +1,7 @@
 package com.starlink.diagnostic.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -32,6 +34,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.navigation.NavHostController
 import com.starlink.diagnostic.ui.AppViewModel
 import com.starlink.diagnostic.ui.BadRed
@@ -221,6 +225,53 @@ fun DashboardScreen(vm: AppViewModel, nav: NavHostController) {
                 KVRow("GPS", formatGpsAr(gpsLabel))
             }
             Spacer(Modifier.height(12.dp))
+
+            // ── V2.3: active errors badge → unified ledger ────────────
+            if (conn.status != null) {
+                val activeErrCount =
+                    (conn.status?.activeAlerts?.size ?: 0) +
+                        (conn.status?.gps?.issues?.size ?: 0) +
+                        (if ((conn.status?.rebootReasonCode ?: 0) >= 9) 1 else 0)
+                val (errBg, errLabel, errColor) = when {
+                    activeErrCount == 0 -> Triple(
+                        GoodGreen.copy(alpha = 0.10f),
+                        "لا أخطاء معلنة — اضغط لعرض السجل الموحد",
+                        GoodGreen,
+                    )
+                    else -> Triple(
+                        WarnAmber.copy(alpha = 0.12f),
+                        "أخطاء معلنة: $activeErrCount — اضغط لعرض السجل",
+                        WarnAmber,
+                    )
+                }
+                GlassCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { nav.navigate("errors") },
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            color = errBg,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                errLabel,
+                                color = errColor,
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.Rounded.ErrorOutline,
+                            contentDescription = "الأخطاء",
+                            tint = errColor,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
 
             // ── V42 EVIDENCE card (outage / restriction / update / power) ─
             val st = conn.status

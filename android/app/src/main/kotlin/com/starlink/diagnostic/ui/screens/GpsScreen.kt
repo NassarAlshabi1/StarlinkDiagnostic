@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -90,6 +91,22 @@ fun GpsScreen(vm: AppViewModel) {
                     st?.gps?.inhibited?.let { if (it) "YES" else "NO" } ?: "unknown",
                     valueColor = if (st?.gps?.inhibited == true) WarnAmber else com.starlink.diagnostic.ui.GoodGreen,
                 )
+                // V2.3: deep GPS fault fields
+                KVRow(
+                    "No Sats After TTFF",
+                    st?.gps?.noSatsAfterTtff?.let { if (it) "YES — فشل الالتقاط" else "NO" } ?: "—",
+                    valueColor = if (st?.gps?.noSatsAfterTtff == true) WarnAmber else com.starlink.diagnostic.ui.GoodGreen,
+                )
+                KVRow(
+                    "PNT Filter",
+                    st?.gps?.pntStateAr ?: st?.gps?.pntState?.toString() ?: "—",
+                    valueColor = when (st?.gps?.pntState) {
+                        3, 4 -> BadRed
+                        1 -> WarnAmber
+                        2 -> com.starlink.diagnostic.ui.GoodGreen
+                        else -> MutedText
+                    },
+                )
                 Spacer(Modifier.height(8.dp))
                 KVRow("Self Test", if (label == "hardware_failure") "FAILED" else if (st == null) "—" else "PASSED/غير مرتبط",
                     valueColor = if (label == "hardware_failure") BadRed else com.starlink.diagnostic.ui.GoodGreen)
@@ -102,6 +119,73 @@ fun GpsScreen(vm: AppViewModel) {
                         style = MaterialTheme.typography.labelSmall,
                         color = MutedText,
                     )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // ── V2.3: detected GPS errors ledger ─────────────────────
+            val issues = st?.gps?.issues ?: emptyList()
+            GlassCard {
+                Text(
+                    "أخطاء GPS المكتشفة (%d)".format(issues.size),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = StrongText,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "كل خطأ يُبنى على حقل معلن من الطبق — الحالات مختلفة وليست متكافئة",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedText,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (issues.isEmpty()) {
+                    if (st != null) {
+                        Text(
+                            "لا أخطاء GPS معلنة حالياً",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = com.starlink.diagnostic.ui.GoodGreen,
+                        )
+                    } else {
+                        Text(
+                            "اتصل بالطبق لفحص أخطاء GPS",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MutedText,
+                        )
+                    }
+                } else {
+                    issues.forEach { g ->
+                        val c = when (g.severity) {
+                            "hard" -> BadRed
+                            "warn" -> WarnAmber
+                            else -> com.starlink.diagnostic.ui.NeutralGrey
+                        }
+                        Column(Modifier.padding(vertical = 6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    color = c.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(6.dp),
+                                ) {
+                                    Text(
+                                        when (g.severity) {
+                                            "hard" -> "عطل"
+                                            "warn" -> "تحذير"
+                                            else -> "معلومة"
+                                        },
+                                        color = c,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text(g.en, style = MaterialTheme.typography.labelSmall, color = MutedText)
+                            }
+                            Spacer(Modifier.height(3.dp))
+                            Text(g.ar, style = MaterialTheme.typography.bodyMedium, color = c)
+                            g.noteAr?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MutedText)
+                            }
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))

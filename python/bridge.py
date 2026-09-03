@@ -200,6 +200,12 @@ def _normalize_status(status, obstruction, alerts):
             "countryCode": status.get("country_code"),
             "bootcount": status.get("bootcount"),
             "buildId": status.get("build_id"),
+            # V2.3: extended hardware identity
+            "boardRev": status.get("board_rev"),
+            "manufacturedVersion": status.get("manufactured_version"),
+            "antiRollbackVersion": status.get("anti_rollback_version"),
+            "generationNumber": status.get("generation_number"),
+            "partitionsEqual": status.get("software_partitions_equal"),
         },
         "downMbps": round(down / 1e6, 2) if down is not None else None,
         "upMbps": round(up / 1e6, 2) if up is not None else None,
@@ -212,20 +218,20 @@ def _normalize_status(status, obstruction, alerts):
         "stowRequested": status.get("stow_requested"),
         "alertsBitfield": status.get("alerts"),
         "alertHwCodes": status.get("alert_hw_codes") or [],
+        # V2.3: the COMPLETE DishAlerts set (20 fields) — each active alert
+        # carries its Arabic label + severity straight from dx.ALERTS_AR.
         "alerts": {
-            "motorsStuck": alerts.get("alert_motors_stuck", False),
-            "thermalShutdown": alerts.get("alert_thermal_shutdown", False),
-            "thermalThrottle": alerts.get("alert_thermal_throttle", False),
-            "unexpectedLocation": alerts.get("alert_unexpected_location", False),
-            "mastNotNearVertical": alerts.get("alert_mast_not_near_vertical", False),
-            "slowEthernetSpeeds": alerts.get("alert_slow_ethernet_speeds", False),
-            "obstructed": alerts.get("alert_obstructed", False),
-            "isHeating": alerts.get("alert_is_heating", False),
-            "powerSupplyThermalThrottle": alerts.get("alert_power_supply_thermal_throttle", False),
-            "noEthernetLink": alerts.get("alert_no_ethernet_link", False),
-            "dishWaterDetected": alerts.get("alert_dish_water_detected", False),
-            "lowerSignalThanPredicted": alerts.get("alert_lower_signal_than_predicted", False),
+            key: alerts.get("alert_" + key, False)
+            for key in dx.ALERTS_AR
         },
+        "activeAlerts": [
+            {
+                "key": key, "en": meta["en"], "ar": meta["ar"],
+                "severity": meta["severity"],
+            }
+            for key, meta in dx.ALERTS_AR.items()
+            if alerts.get("alert_" + key) is True
+        ],
         "obstruction": {
             "currentlyObstructed": status.get("currently_obstructed"),
             "fractionObstructed": round(status.get("fraction_obstructed"), 4)
@@ -251,6 +257,11 @@ def _normalize_status(status, obstruction, alerts):
             "inhibited": gps["inhibited"],
             "inhibitEvidence": gps["inhibitEvidence"],
             "hwCode": gps["hwCode"],
+            # V2.3: full GPS error ledger
+            "noSatsAfterTtff": gps.get("noSatsAfterTtff"),
+            "pntState": gps.get("pntState"),
+            "pntStateAr": gps.get("pntStateAr"),
+            "issues": gps.get("issues", []),
         },
         "boresightAzimuthDeg": status.get("direction_azimuth"),
         "boresightElevationDeg": status.get("direction_elevation"),
@@ -277,6 +288,17 @@ def _normalize_status(status, obstruction, alerts):
         },
         "battery": status.get("battery"),
         "rebootReason": status.get("reboot_reason"),
+        # V2.3: reboot forensics + ready-state Arabic labels
+        "rebootReasonCode": status.get("reboot_reason_code"),
+        "rebootReasonAr": (dx.REBOOT_AR.get(status.get("reboot_reason_code"), {})
+                           .get("ar") if status.get("reboot_reason_code") is not None else None),
+        "readyStatesAr": [
+            {
+                "key": key, "en": meta["en"], "ar": meta["ar"],
+                "ready": (status.get("ready_states") or {}).get(key),
+            }
+            for key, meta in dx.READY_AR.items()
+        ],
     }
 
 
@@ -570,6 +592,64 @@ def _op_full_diagnostic(args):
         assessment["network"] = dx.network_verdict(net)
     return {"assessment": _clean(assessment), "mode": _mode,
             "status": _clean(_normalize_status(status, obstruction, alerts))}
+
+
+# ── V2.3: hardware check + unified error ledger ──────────────────────────
+def _collect_outages():
+    """Outage records from history (real) or demo simulator."""
+    if _mode == "real":
+        try:
+            ctx = _get_ctx()
+            hist = get_history(context=ctx)
+            return outages_from_history(hist)
+        except (grpc.RpcError, GrpcError, Exception):  # noqa: BLE001
+            return None
+    if _mode == "demo":
+        return demo_sim.demo_outage_records()
+    return None
+
+
+def _op_hardware_check(_args):
+    """Whole-dish hardware report (V2.3 «فحص الهاردوير»)."""
+    status, obstruction, alerts, _hist = _current_status()
+    status = dict(status)
+    status["_alerts_bool"] = alerts or {}
+    gps = dx.assess_gps(status)
+    report = dx.hardware_check(status, gps)
+    report["mode"] = _mode
+    if _db_ready:
+        db.store_test(
+            report["ts"], "hardware_check",
+            "FAILED" if report["overall"] == "fail"
+            else ("WARN" if report["overall"] == "warn" else "PASSED"),
+            report,
+        )
+        active = report.get("activeAlerts") or []
+        if active:
+            db.store_alerts(
+                report["ts"],
+                [{"kind": a["key"], "detail": (a["en"], a["ar"])} for a in active],
+            )
+    return {"report": report}
+
+
+def _op_errors_log(_args):
+    """Unified error ledger from every announced source (V2.3 «الأخطاء»)."""
+    status, obstruction, alerts, _hist = _current_status()
+    outages = _collect_outages()
+    ledger = dx.errors_log(status, alerts, outages=outages)
+    ledger["mode"] = _mode
+    if _db_ready and ledger.get("entries"):
+        db.store_alerts(
+            ledger["ts"],
+            [
+                {"kind": e.get("kind") or "unknown",
+                 "detail": (e.get("en"), e.get("ar"))}
+                for e in ledger["entries"]
+                if e.get("severity") in ("hard", "warn")
+            ],
+        )
+    return {"ledger": ledger}
 
 
 def _demo_stats():
@@ -962,6 +1042,8 @@ _OPS = {
     "net_verdict": _op_net_verdict,
     "trends": _op_trends,
     "export_csv": _op_export_csv,
+    "hardware_check": _op_hardware_check,
+    "errors_log": _op_errors_log,
     "shutdown": _op_shutdown,
 }
 

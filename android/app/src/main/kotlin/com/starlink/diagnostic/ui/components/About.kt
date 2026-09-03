@@ -24,6 +24,10 @@ import com.starlink.diagnostic.ui.SkySoft
 import com.starlink.diagnostic.ui.StrongText
 
 private val CHANGELOG = listOf(
+    "v2.3.0 — فحص الهاردوير الشامل (هوية الجهاز، جاهزية الأنظمة الست، أدلة " +
+        "إعادة التشغيل)، سجل أخطاء موحد من كل المصادر (20 تنبيه DishAlerts + " +
+        "الإيقاف + التحديث + المحركات + الانقطاعات)، وسجل أخطاء GPS التفصيلي " +
+        "(TTFF، مرشح PNT، inhibit، عطل العتاد)",
     "v2.2.0 — إحصاءات دقيقة p50/p95/p99 + jitter، مؤشر جودة تدفق البيانات، " +
         "اتجاهات طويلة المدى (توفر/انقطاعات/اتجاه الكمون عبر 6س/24س/7أيام)، " +
         "تصدير CSV، معالج أول تشغيل، صحة اتصال ذكية مع تراجع تصاعدي، تقرير PDF موسع",
@@ -63,7 +67,7 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 ) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
                         Text(
-                            "Starlink Diagnostic Pro v2.2.0",
+                            "Starlink Diagnostic Pro v2.3.0",
                             style = MaterialTheme.typography.titleMedium,
                             color = StrongText,
                             fontWeight = FontWeight.Bold,

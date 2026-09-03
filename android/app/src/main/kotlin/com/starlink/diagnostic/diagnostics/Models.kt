@@ -9,7 +9,36 @@ data class DishInfo(
     val id: String?,
     val hardwareVersion: String?,
     val softwareVersion: String?,
+    val countryCode: String?,
+    val bootcount: Int?,
+    val buildId: String?,
+    val boardRev: Int?,
+    val manufacturedVersion: String?,
+    val antiRollbackVersion: Int?,
+    val generationNumber: Long?,
+    val partitionsEqual: Boolean?,
 )
+
+/** One GPS fault from the dish's own announced evidence (V2.3). */
+data class GpsIssue(
+    val key: String,
+    val code: Int?,
+    val severity: String,
+    val en: String,
+    val ar: String,
+    val noteAr: String?,
+) {
+    companion object {
+        fun parse(o: JSONObject): GpsIssue = GpsIssue(
+            key = o.optString("key"),
+            code = o.optIntOrNull("code"),
+            severity = o.optString("severity", "warn"),
+            en = o.optString("en"),
+            ar = o.optString("ar"),
+            noteAr = o.optStringOrNull("noteAr"),
+        )
+    }
+}
 
 data class GpsInfo(
     val verdict: String,
@@ -19,6 +48,10 @@ data class GpsInfo(
     val inhibited: Boolean?,
     val hwCode: Int?,
     val inhibitEvidence: JSONObject?,
+    val noSatsAfterTtff: Boolean?,
+    val pntState: Int?,
+    val pntStateAr: String?,
+    val issues: List<GpsIssue>,
 )
 
 data class ObstructionInfo(
@@ -58,6 +91,22 @@ data class PowerInfo(
     val upsuUptimeS: Long?,
 )
 
+/** Active announced alert with its Arabic label + severity (V2.3). */
+data class ActiveAlert(
+    val key: String,
+    val en: String,
+    val ar: String,
+    val severity: String,
+)
+
+/** One DishReadyStates row with Arabic label (V2.3). */
+data class ReadyRow(
+    val key: String,
+    val en: String,
+    val ar: String,
+    val ready: Boolean?,
+)
+
 data class StatusData(
     val state: String?,
     val uptimeS: Long?,
@@ -73,6 +122,10 @@ data class StatusData(
     val alertsBitfield: Long,
     val alertHwCodes: List<Int>,
     val alerts: Map<String, Boolean>,
+    val activeAlerts: List<ActiveAlert>,
+    val rebootReasonCode: Int?,
+    val rebootReasonAr: String?,
+    val readyStatesAr: List<ReadyRow>,
     val obstruction: ObstructionInfo,
     val gps: GpsInfo,
     val boresightAzimuthDeg: Double?,
@@ -105,6 +158,38 @@ data class StatusData(
             for (i in 0 until codesArr.length()) codes.add(codesArr.optInt(i, 0))
             val alerts = mutableMapOf<String, Boolean>()
             al.keys().forEach { alerts[it] = al.optBoolean(it, false) }
+            val activeAlerts = mutableListOf<ActiveAlert>()
+            val aaArr = s.optJSONArray("activeAlerts") ?: JSONArray()
+            for (i in 0 until aaArr.length()) {
+                val x = aaArr.optJSONObject(i) ?: continue
+                activeAlerts.add(
+                    ActiveAlert(
+                        key = x.optString("key"),
+                        en = x.optString("en"),
+                        ar = x.optString("ar"),
+                        severity = x.optString("severity", "warn"),
+                    ),
+                )
+            }
+            val readyRows = mutableListOf<ReadyRow>()
+            val rsArr = s.optJSONArray("readyStatesAr") ?: JSONArray()
+            for (i in 0 until rsArr.length()) {
+                val x = rsArr.optJSONObject(i) ?: continue
+                readyRows.add(
+                    ReadyRow(
+                        key = x.optString("key"),
+                        en = x.optString("en"),
+                        ar = x.optString("ar"),
+                        ready = x.optBoolOrNull("ready"),
+                    ),
+                )
+            }
+            val gpsIssues = mutableListOf<GpsIssue>()
+            val giArr = gp.optJSONArray("issues") ?: JSONArray()
+            for (i in 0 until giArr.length()) {
+                val x = giArr.optJSONObject(i) ?: continue
+                gpsIssues.add(GpsIssue.parse(x))
+            }
             return StatusData(
                 state = s.optStringOrNull("state"),
                 uptimeS = if (s.has("uptimeS") && !s.isNull("uptimeS")) s.optLong("uptimeS") else null,
@@ -112,6 +197,14 @@ data class StatusData(
                     id = di.optStringOrNull("id"),
                     hardwareVersion = di.optStringOrNull("hardwareVersion"),
                     softwareVersion = di.optStringOrNull("softwareVersion"),
+                    countryCode = di.optStringOrNull("countryCode"),
+                    bootcount = di.optIntOrNull("bootcount"),
+                    buildId = di.optStringOrNull("buildId"),
+                    boardRev = di.optIntOrNull("boardRev"),
+                    manufacturedVersion = di.optStringOrNull("manufacturedVersion"),
+                    antiRollbackVersion = di.optIntOrNull("antiRollbackVersion"),
+                    generationNumber = if (di.has("generationNumber") && !di.isNull("generationNumber")) di.optLong("generationNumber") else null,
+                    partitionsEqual = di.optBoolOrNull("partitionsEqual"),
                 ),
                 downMbps = s.optDoubleOrNull("downMbps"),
                 upMbps = s.optDoubleOrNull("upMbps"),
@@ -124,6 +217,10 @@ data class StatusData(
                 alertsBitfield = s.optLong("alertsBitfield", 0L),
                 alertHwCodes = codes,
                 alerts = alerts,
+                activeAlerts = activeAlerts,
+                rebootReasonCode = s.optIntOrNull("rebootReasonCode"),
+                rebootReasonAr = s.optStringOrNull("rebootReasonAr"),
+                readyStatesAr = readyRows,
                 obstruction = ObstructionInfo(
                     currentlyObstructed = ob.optBoolOrNull("currentlyObstructed"),
                     fractionObstructed = ob.optDoubleOrNull("fractionObstructed"),
@@ -140,6 +237,10 @@ data class StatusData(
                     inhibited = gp.optBoolOrNull("inhibited"),
                     hwCode = if (gp.has("hwCode") && !gp.isNull("hwCode")) gp.optInt("hwCode") else null,
                     inhibitEvidence = gp.optJSONObject("inhibitEvidence"),
+                    noSatsAfterTtff = gp.optBoolOrNull("noSatsAfterTtff"),
+                    pntState = gp.optIntOrNull("pntState"),
+                    pntStateAr = gp.optStringOrNull("pntStateAr"),
+                    issues = gpsIssues,
                 ),
                 boresightAzimuthDeg = s.optDoubleOrNull("boresightAzimuthDeg"),
                 boresightElevationDeg = s.optDoubleOrNull("boresightElevationDeg"),
@@ -689,3 +790,225 @@ data class DishPingTarget(
     val dropRate: Double,
     val latencyMs: Double,
 )
+
+// ── V2.3: hardware check report + unified error ledger ──────────────────
+
+data class HardwareIdentity(
+    val id: String?,
+    val hardwareVersion: String?,
+    val softwareVersion: String?,
+    val buildId: String?,
+    val boardRev: Int?,
+    val manufacturedVersion: String?,
+    val antiRollbackVersion: Int?,
+    val generationNumber: Long?,
+    val partitionsEqual: Boolean?,
+    val countryCode: String?,
+    val bootcount: Int?,
+    val uptimeS: Long?,
+)
+
+data class HwReadyRow(val key: String, val en: String, val ar: String, val ready: Boolean?)
+
+data class HwAlertRow(
+    val key: String,
+    val en: String,
+    val ar: String,
+    val severity: String,
+    val active: Boolean,
+    val announced: Boolean,
+)
+
+data class HardwareReport(
+    val ts: Double?,
+    val overall: String,          // ok | warn | fail
+    val identity: HardwareIdentity,
+    val readyStates: List<HwReadyRow>,
+    val notReadyCount: Int,
+    val alerts: List<HwAlertRow>,
+    val activeAlerts: List<ActiveAlert>,
+    val activeAlertCount: Int,
+    val bootcount: Int?,
+    val lastReasonCode: Int?,
+    val lastReasonAr: String?,
+    val lastReasonSeverity: String?,
+    val actuatorState: String?,
+    val actuatorFaulted: Boolean,
+    val tiltAngleDeg: Double?,
+    val attitudeAr: String?,
+    val attitudeUncertaintyDeg: Double?,
+    val dishW: Double?,
+    val routerW: Double?,
+    val thermalThrottle: Boolean,
+    val thermalShutdown: Boolean,
+    val heating: Boolean,
+    val psuThrottle: Boolean,
+    val gpsVerdict: String,
+    val gpsSats: Int?,
+    val gpsInhibited: Boolean?,
+    val gpsIssues: List<GpsIssue>,
+    val swuStateAr: String?,
+    val swuProgress: Double?,
+    val swuRequiresReboot: Boolean?,
+    val mode: String,
+) {
+    companion object {
+        fun parse(d: JSONObject): HardwareReport {
+            val id = d.optJSONObject("identity") ?: JSONObject()
+            val rb = d.optJSONObject("reboot") ?: JSONObject()
+            val mo = d.optJSONObject("motion") ?: JSONObject()
+            val th = d.optJSONObject("thermal") ?: JSONObject()
+            val pw = d.optJSONObject("power") ?: JSONObject()
+            val gp = d.optJSONObject("gps") ?: JSONObject()
+            val sw = d.optJSONObject("softwareUpdate") ?: JSONObject()
+
+            val ready = mutableListOf<HwReadyRow>()
+            val rsArr = d.optJSONArray("readyStates") ?: JSONArray()
+            for (i in 0 until rsArr.length()) {
+                val x = rsArr.optJSONObject(i) ?: continue
+                ready.add(
+                    HwReadyRow(
+                        key = x.optString("key"),
+                        en = x.optString("en"),
+                        ar = x.optString("ar"),
+                        ready = x.optBoolOrNull("ready"),
+                    ),
+                )
+            }
+            val alerts = mutableListOf<HwAlertRow>()
+            val alArr = d.optJSONArray("alerts") ?: JSONArray()
+            for (i in 0 until alArr.length()) {
+                val x = alArr.optJSONObject(i) ?: continue
+                alerts.add(
+                    HwAlertRow(
+                        key = x.optString("key"),
+                        en = x.optString("en"),
+                        ar = x.optString("ar"),
+                        severity = x.optString("severity", "warn"),
+                        active = x.optBoolean("active", false),
+                        announced = x.optBoolean("announced", false),
+                    ),
+                )
+            }
+            val activeAlerts = mutableListOf<ActiveAlert>()
+            val aaArr = d.optJSONArray("activeAlerts") ?: JSONArray()
+            for (i in 0 until aaArr.length()) {
+                val x = aaArr.optJSONObject(i) ?: continue
+                activeAlerts.add(
+                    ActiveAlert(
+                        key = x.optString("key"),
+                        en = x.optString("en"),
+                        ar = x.optString("ar"),
+                        severity = x.optString("severity", "warn"),
+                    ),
+                )
+            }
+            val gpsIssues = mutableListOf<GpsIssue>()
+            val giArr = gp.optJSONArray("issues") ?: JSONArray()
+            for (i in 0 until giArr.length()) {
+                val x = giArr.optJSONObject(i) ?: continue
+                gpsIssues.add(GpsIssue.parse(x))
+            }
+            return HardwareReport(
+                ts = d.optDoubleOrNull("ts"),
+                overall = d.optString("overall", "ok"),
+                identity = HardwareIdentity(
+                    id = id.optStringOrNull("id"),
+                    hardwareVersion = id.optStringOrNull("hardwareVersion"),
+                    softwareVersion = id.optStringOrNull("softwareVersion"),
+                    buildId = id.optStringOrNull("buildId"),
+                    boardRev = id.optIntOrNull("boardRev"),
+                    manufacturedVersion = id.optStringOrNull("manufacturedVersion"),
+                    antiRollbackVersion = id.optIntOrNull("antiRollbackVersion"),
+                    generationNumber = if (id.has("generationNumber") && !id.isNull("generationNumber")) id.optLong("generationNumber") else null,
+                    partitionsEqual = id.optBoolOrNull("partitionsEqual"),
+                    countryCode = id.optStringOrNull("countryCode"),
+                    bootcount = id.optIntOrNull("bootcount"),
+                    uptimeS = if (id.has("uptimeS") && !id.isNull("uptimeS")) id.optLong("uptimeS") else null,
+                ),
+                readyStates = ready,
+                notReadyCount = d.optInt("notReadyCount", 0),
+                alerts = alerts,
+                activeAlerts = activeAlerts,
+                activeAlertCount = d.optInt("activeAlertCount", 0),
+                bootcount = rb.optIntOrNull("bootcount"),
+                lastReasonCode = rb.optIntOrNull("lastReasonCode"),
+                lastReasonAr = rb.optStringOrNull("lastReasonAr"),
+                lastReasonSeverity = rb.optStringOrNull("lastReasonSeverity"),
+                actuatorState = mo.optStringOrNull("actuatorState"),
+                actuatorFaulted = mo.optBoolean("actuatorFaulted", false),
+                tiltAngleDeg = mo.optDoubleOrNull("tiltAngleDeg"),
+                attitudeAr = mo.optStringOrNull("attitudeAr"),
+                attitudeUncertaintyDeg = mo.optDoubleOrNull("attitudeUncertaintyDeg"),
+                dishW = pw.optDoubleOrNull("dishW"),
+                routerW = pw.optDoubleOrNull("routerW"),
+                thermalThrottle = th.optBoolean("throttle", false),
+                thermalShutdown = th.optBoolean("shutdown", false),
+                heating = th.optBoolean("heating", false),
+                psuThrottle = th.optBoolean("psuThrottle", false),
+                gpsVerdict = gp.optString("verdict", "unknown"),
+                gpsSats = gp.optIntOrNull("sats"),
+                gpsInhibited = gp.optBoolOrNull("inhibited"),
+                gpsIssues = gpsIssues,
+                swuStateAr = sw.optStringOrNull("stateAr"),
+                swuProgress = sw.optDoubleOrNull("progress"),
+                swuRequiresReboot = sw.optBoolOrNull("requiresReboot"),
+                mode = d.optString("mode", "real"),
+            )
+        }
+    }
+}
+
+/** One fault in the unified error ledger (V2.3 «استخراج الأخطاء»). */
+data class ErrorEntry(
+    val source: String,
+    val kind: String,
+    val code: Int?,
+    val en: String,
+    val ar: String,
+    val severity: String,
+    val detailAr: String?,
+    val ts: Double?,
+)
+
+data class ErrorsReport(
+    val ts: Double?,
+    val total: Int,
+    val hard: Int,
+    val warn: Int,
+    val info: Int,
+    val entries: List<ErrorEntry>,
+    val mode: String,
+) {
+    companion object {
+        fun parse(d: JSONObject): ErrorsReport {
+            val counts = d.optJSONObject("counts") ?: JSONObject()
+            val entries = mutableListOf<ErrorEntry>()
+            val arr = d.optJSONArray("entries") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+                val x = arr.optJSONObject(i) ?: continue
+                entries.add(
+                    ErrorEntry(
+                        source = x.optString("source"),
+                        kind = x.optString("kind"),
+                        code = x.optIntOrNull("code"),
+                        en = x.optString("en"),
+                        ar = x.optString("ar"),
+                        severity = x.optString("severity", "info"),
+                        detailAr = x.optStringOrNull("detailAr"),
+                        ts = x.optDoubleOrNull("ts"),
+                    ),
+                )
+            }
+            return ErrorsReport(
+                ts = d.optDoubleOrNull("ts"),
+                total = d.optInt("total", 0),
+                hard = counts.optInt("hard", 0),
+                warn = counts.optInt("warn", 0),
+                info = counts.optInt("info", 0),
+                entries = entries,
+                mode = d.optString("mode", "real"),
+            )
+        }
+    }
+}

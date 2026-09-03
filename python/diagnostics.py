@@ -18,6 +18,8 @@ Design rules (from the V2 spec):
   otherwise the report says so and lists the next test.
 """
 
+import time
+
 # Codes officially defined by the gRPC schema (repeated Alert enum,
 # alerts_hardware field) — verified against the dish protoset.
 CODE_TABLE = {
@@ -110,6 +112,67 @@ ATTITUDE_AR = {
     2: "المرشح مستقر (converged)",
     3: "المرشح فاشل",
     4: "المرشح غير صالح",
+}
+
+# v42 DishAlerts — the COMPLETE boolean alert set (20 fields, 1005).
+# These are the ONLY faults the modern dish announces by name; every entry
+# below is a real proto field, never invented. severity: hard|warn|info
+ALERTS_AR = {
+    "motors_stuck":                {"en": "MOTORS_STUCK",             "ar": "محركات التوجيه عالقة",            "severity": "hard"},
+    "thermal_shutdown":            {"en": "THERMAL_SHUTDOWN",         "ar": "إيقاف حراري",                     "severity": "hard"},
+    "thermal_throttle":            {"en": "THERMAL_THROTTLE",         "ar": "خفض حراري للأداء",                "severity": "warn"},
+    "unexpected_location":         {"en": "UNEXPECTED_LOCATION",      "ar": "موقع غير متوقع",                  "severity": "warn"},
+    "mast_not_near_vertical":      {"en": "MAST_NOT_NEAR_VERTICAL",   "ar": "السارية غير شبه رأسية",           "severity": "warn"},
+    "slow_ethernet_speeds":        {"en": "SLOW_ETHERNET_SPEEDS",     "ar": "إيثرنت بطيء",                     "severity": "warn"},
+    "roaming":                     {"en": "ROAMING",                  "ar": "الطبق في وضع تجوال خارج نطاقه",    "severity": "info"},
+    "install_pending":             {"en": "INSTALL_PENDING",          "ar": "التثبيت لم يُكتمل بعد",           "severity": "info"},
+    "is_heating":                  {"en": "IS_HEATING",               "ar": "التسخين نشط (وضع الشتاء)",        "severity": "info"},
+    "power_supply_thermal_throttle": {"en": "POWER_SUPPLY_THERMAL_THROTTLE", "ar": "خفض حراري لمزود الطاقة",    "severity": "warn"},
+    "is_power_save_idle":          {"en": "IS_POWER_SAVE_IDLE",       "ar": "الطبق خامل بوضع توفير الطاقة",    "severity": "info"},
+    "dbf_telem_stale":             {"en": "DBF_TELEM_STALE",          "ar": "تيليمتري مصفوفة الهوائيات متوقف", "severity": "warn"},
+    "low_motor_current":           {"en": "LOW_MOTOR_CURRENT",        "ar": "تيار محركات منخفض (خلل ميكانيكي محتمل)", "severity": "warn"},
+    "lower_signal_than_predicted": {"en": "LOWER_SIGNAL_THAN_PREDICTED", "ar": "إشارة أدنى من المتوقعة",       "severity": "warn"},
+    "slow_ethernet_speeds_100":    {"en": "SLOW_ETHERNET_SPEEDS_100", "ar": "إيثرنت مقيّد بـ100Mbps",          "severity": "warn"},
+    "obstruction_map_reset":       {"en": "OBSTRUCTION_MAP_RESET",    "ar": "خريطة العرقلة أُعيد ضبطها",       "severity": "info"},
+    "dish_water_detected":         {"en": "DISH_WATER_DETECTED",      "ar": "رطوبة/ماء داخل الطبق",            "severity": "hard"},
+    "router_water_detected":       {"en": "ROUTER_WATER_DETECTED",    "ar": "رطوبة/ماء داخل الراوتر",          "severity": "warn"},
+    "upsu_router_port_slow":       {"en": "UPSU_ROUTER_PORT_SLOW",    "ar": "منفذ الراوتر في مزود الطاقة بطيء", "severity": "warn"},
+    "no_ethernet_link":            {"en": "NO_ETHERNET_LINK",         "ar": "لا يوجد رابط إيثرنت",             "severity": "warn"},
+}
+
+# v42 RebootReason (field 1032) — why the dish last rebooted. Hardware-relevant
+# reasons (thermal cut, process crash, kernel taint) are the fingerprints of
+# intermittent faults that "rebooted itself overnight".
+REBOOT_AR = {
+    0:  {"en": "NONE",                  "ar": "لا يوجد",                    "severity": "info"},
+    1:  {"en": "MANUAL",                "ar": "إعادة تشغيل يدوية",          "severity": "info"},
+    2:  {"en": "LOSS_OF_COMM",          "ar": "فقد اتصال بالأقمار",         "severity": "warn"},
+    3:  {"en": "SWUPDATE_NOW",          "ar": "تحديث البرامج (فوري)",       "severity": "info"},
+    4:  {"en": "SWUPDATE_SCHEDULED",    "ar": "تحديث البرامج (مجدول)",      "severity": "info"},
+    5:  {"en": "APP",                   "ar": "أمر من تطبيق",               "severity": "info"},
+    6:  {"en": "EMC",                   "ar": "تداخل كهرومغناطيسي",         "severity": "warn"},
+    7:  {"en": "FACTORY_RESET",         "ar": "إعادة ضبط مصنعية",           "severity": "warn"},
+    8:  {"en": "TEST_CASE",             "ar": "اختبار مصنعي",               "severity": "info"},
+    9:  {"en": "THERMAL_POWER_CUT",     "ar": "قطع طاقة حراري",             "severity": "hard"},
+    10: {"en": "CRITICAL_PROCESS_DIED", "ar": "موت عملية حرجة داخلية",      "severity": "hard"},
+    11: {"en": "NO_RF_READY",           "ar": "وحدة RF لم تجهز",            "severity": "hard"},
+    12: {"en": "POSTPONED_LOSS_OF_COMM", "ar": "فقد اتصال مؤجل",            "severity": "warn"},
+    13: {"en": "SWUPDATE_STATIONARY",   "ar": "تحديث (وضع ثابت)",           "severity": "info"},
+    14: {"en": "AAP_CRASH",             "ar": "انهيار مصفوفة الهوائيات AAP", "severity": "hard"},
+    15: {"en": "XP70_SACS",             "ar": "خلل ناقل XP70/SACS",         "severity": "hard"},
+    16: {"en": "INE_FAILED",            "ar": "فشل وحدة INE",               "severity": "hard"},
+    17: {"en": "KERNEL_TAINTED",        "ar": "نواة النظام متأثرة (kernel tainted)", "severity": "hard"},
+}
+
+# v42 DishReadyStates (field 1019) — the six subsystem readiness bits the dish
+# publishes. This is the closest thing to a per-board hardware check surface.
+READY_AR = {
+    "cady": {"en": "CADY",   "ar": "محرك التوجيه والثبات (CADY)"},
+    "scp":  {"en": "SCP",    "ar": "معالج التحكم الرئيسي (SCP)"},
+    "l1l2": {"en": "L1L2",   "ar": "طبقة الراديو L1/L2"},
+    "xphy": {"en": "XPHY",   "ar": "ناقل البيانات فائق التردد (XPHY)"},
+    "aap":  {"en": "AAP",    "ar": "مصفوفة الهوائيات الفعالة (AAP)"},
+    "rf":   {"en": "RF",     "ar": "وحدة الترددات الراديوية (RF)"},
 }
 
 # The 8 hardware components shown on the HARDWARE page.
@@ -216,15 +279,17 @@ def assess_outages(outages):
 
 
 def assess_gps(status):
-    """Three-way GPS verdict from the actual announced fields.
+    """Three-way GPS verdict + detailed issue list from the announced fields.
 
     status keys used: gps_ready, gps_sats, gps_enabled, gps_inhibit_raw,
-    alert_hw_codes.
+    alert_hw_codes, gps_no_sats_after_ttff, gps_pnt_state.
     """
     ready = status.get("gps_ready")
     sats = status.get("gps_sats")
     enabled = status.get("gps_enabled")  # None => unknown inhibit state
     inhibit_raw = status.get("gps_inhibit_raw")
+    ttff_fail = status.get("gps_no_sats_after_ttff")
+    pnt_state = status.get("gps_pnt_state")
     hw_codes = [c for c in status.get("alert_hw_codes", []) if c != 0]
     gps_hw_code = None
     for c in hw_codes:
@@ -246,6 +311,55 @@ def assess_gps(status):
     else:
         verdict = "unknown"
 
+    # ── GPS error ledger — every distinct GPS fault the dish announces ──
+    # Each issue is a separate, non-equivalent diagnostic fact.
+    pnt_bad = pnt_state in (3, 4)  # FILTER_FAULTED / FILTER_INVALID
+    pnt_unstable = pnt_state == 1  # FILTER_UNCONVERGED
+    issues = []
+    if gps_hw_code is not None:
+        issues.append({
+            "key": "gps_hw_fail", "code": gps_hw_code, "severity": "hard",
+            "en": "GPS_HARDWARE_TEST_FAILURE",
+            "ar": "فشل اختبار عتاد GPS — الطبق يعلن الكود %d" % gps_hw_code,
+            "noteAr": "وحدة GPS نفسها لم تجتز اختبارها الذاتي؛ إعادة التشغيل قد تساعد، وإلا فهي عطل عتاد فعلي",
+        })
+    if ttff_fail is True and inhibited is not True:
+        issues.append({
+            "key": "gps_ttff_fail", "code": None, "severity": "warn",
+            "en": "NO_SATS_AFTER_TTFF",
+            "ar": "لم يُلتقط أي قمر حتى بعد انتهاء زمن أول الإصلاح (TTFF)",
+            "noteAr": "الوحدة تبحث و تفشل — تحقق من الرؤية للسماء؛ إن استمر فهو مؤشر عطل هوائي GPS",
+        })
+    if inhibited is True:
+        issues.append({
+            "key": "gps_inhibited", "code": None, "severity": "warn",
+            "en": "GPS_INHIBITED",
+            "ar": "GPS موقوف عمداً عبر إعداد inhibit_gps",
+            "noteAr": "ليس عطلاً — يمكن تفعيله من شاشة التحكم (أمر تفعيل GPS)",
+        })
+    if ready is False and (sats or 0) == 0 and inhibited is not True and ttff_fail is not True:
+        issues.append({
+            "key": "gps_no_fix", "code": None, "severity": "warn",
+            "en": "NO_FIX",
+            "ar": "لا إصلاح موقع حالياً (valid=false, sats=0)",
+            "noteAr": "غالباً مؤقت: إقلاع حديث، سماء محجوبة، أو انتقال موضع — راقب التغير",
+        })
+    if pnt_bad:
+        issues.append({
+            "key": "gps_pnt_fault", "code": None, "severity": "hard",
+            "en": "PNT_FILTER_" + ("FAULTED" if pnt_state == 3 else "INVALID"),
+            "ar": "مرشح الملاحة/التوقيت (PNT) %s" % (
+                "فاشل" if pnt_state == 3 else "غير صالح"),
+            "noteAr": "حساب الموقع والتوقيت المتجه للأقمار معطل — يؤثر على المسار والتحديثات؛ أعد التشغيل",
+        })
+    elif pnt_unstable and verdict != GPS_INHIBITED:
+        issues.append({
+            "key": "gps_pnt_unstable", "code": None, "severity": "info",
+            "en": "PNT_FILTER_UNCONVERGED",
+            "ar": "مرشح PNT لم يستقر بعد",
+            "noteAr": "طبيعي بعد الإقلاع مباشرة؛ إن استمر دقائق فقد يعني رؤية سماء ضعيفة",
+        })
+
     return {
         "verdict": verdict,
         "valid": ready,
@@ -253,6 +367,10 @@ def assess_gps(status):
         "inhibited": inhibited,
         "inhibitEvidence": inhibit_raw,
         "hwCode": gps_hw_code,
+        "noSatsAfterTtff": ttff_fail,
+        "pntState": pnt_state,
+        "pntStateAr": ATTITUDE_AR.get(pnt_state) if pnt_state is not None else None,
+        "issues": issues,
         # A GPS hardware fault may only be concluded when the dish itself
         # announced a GPS code AND GPS was not inhibited at the same time.
         "canConcludeHwFault": gps_hw_code is not None and inhibited is not True,
@@ -339,6 +457,269 @@ def _hardware_page(status, gps):
         out.append(comp("power", "ok", None, "لا تنبيهات طاقة"))
 
     return out
+
+
+def hardware_check(status, gps):
+    """Structured whole-dish hardware report (V2.3 «فحص العتاد الشامل»).
+
+    Aggregates every hardware surface the dish announces over gRPC into one
+    JSON-able document: device identity, six subsystem readiness bits, the
+    complete alert set, actuator/attitude motion health, thermal, power,
+    reboot forensics (bootcount + last reason) and the GPS verdict.
+    Nothing here is invented — every entry maps to a proto field.
+    """
+    alerts_bool = status.get("_alerts_bool", {}) or {}
+    ready = status.get("ready_states") or {}
+    alignment = status.get("alignment") or {}
+    swu = status.get("software_update_stats") or {}
+    battery = status.get("battery") or {}
+
+    # ── Identity ────────────────────────────────────────────────────────
+    identity = {
+        "id": status.get("id"),
+        "hardwareVersion": status.get("hardware_version"),
+        "softwareVersion": status.get("software_version"),
+        "buildId": status.get("build_id"),
+        "boardRev": status.get("board_rev"),
+        "manufacturedVersion": status.get("manufactured_version"),
+        "antiRollbackVersion": status.get("anti_rollback_version"),
+        "generationNumber": status.get("generation_number"),
+        "partitionsEqual": status.get("software_partitions_equal"),
+        "countryCode": status.get("country_code"),
+        "bootcount": status.get("bootcount"),
+        "uptimeS": status.get("uptime"),
+    }
+
+    # ── Six subsystem readiness bits ────────────────────────────────────
+    ready_rows = []
+    for key, meta in READY_AR.items():
+        val = ready.get(key)
+        # None means the dish did not announce the bit at all.
+        ready_rows.append({
+            "key": key, "en": meta["en"], "ar": meta["ar"],
+            "ready": None if val is None else bool(val),
+        })
+
+    # ── Complete announced alert set (all 20 DishAlerts) ────────────────
+    alert_rows = []
+    for key, meta in ALERTS_AR.items():
+        val = alerts_bool.get("alert_" + key)
+        alert_rows.append({
+            "key": key, "en": meta["en"], "ar": meta["ar"],
+            "severity": meta["severity"],
+            "active": bool(val) if val is not None else False,
+            "announced": val is not None,
+        })
+
+    # ── Reboot forensics ────────────────────────────────────────────────
+    rr = status.get("reboot_reason_code")
+    rr_entry = REBOOT_AR.get(rr if rr is not None else 0, REBOOT_AR[0])
+
+    # ── Motion (actuator + attitude filter) ─────────────────────────────
+    actuator_faulted = alignment.get("actuatorState") == "ACT_FAULTED"
+    attitude = alignment.get("attitudeState")
+    attitude_bad = attitude in ("AES_FILTER_FAULTED", "AES_FILTER_INVALID")
+
+    overall = "ok"
+    hard_hits = [a for a in alert_rows if a["active"] and a["severity"] == "hard"]
+    warn_hits = [a for a in alert_rows if a["active"] and a["severity"] == "warn"]
+    not_ready = [r for r in ready_rows if r["ready"] is False]
+    if hard_hits or not_ready or actuator_faulted or attitude_bad \
+            or gps.get("verdict") == GPS_HW_FAIL or rr_entry["severity"] == "hard":
+        overall = "fail"
+    elif warn_hits or gps.get("verdict") in (GPS_NO_FIX, GPS_INHIBITED):
+        overall = "warn"
+
+    return {
+        "ts": time.time(),
+        "overall": overall,
+        "identity": identity,
+        "readyStates": ready_rows,
+        "notReadyCount": len(not_ready),
+        "alerts": alert_rows,
+        "activeAlerts": [
+            {"key": a["key"], "en": a["en"], "ar": a["ar"], "severity": a["severity"]}
+            for a in alert_rows if a["active"]
+        ],
+        # counts EVERY active alert (hard + warn + info) so the number always
+        # matches the length of activeAlerts above
+        "activeAlertCount": sum(1 for a in alert_rows if a["active"]),
+        "reboot": {
+            "bootcount": identity["bootcount"],
+            "uptimeS": identity["uptimeS"],
+            "lastReasonCode": rr,
+            "lastReasonEn": rr_entry["en"],
+            "lastReasonAr": rr_entry["ar"],
+            "lastReasonSeverity": rr_entry["severity"],
+        },
+        "motion": {
+            "actuatorState": alignment.get("actuatorState"),
+            "actuatorFaulted": actuator_faulted,
+            "tiltAngleDeg": alignment.get("tiltAngleDeg"),
+            "attitudeState": attitude,
+            "attitudeAr": ATTITUDE_AR.get(
+                {"AES_FILTER_RESET": 0, "AES_FILTER_UNCONVERGED": 1,
+                 "AES_FILTER_CONVERGED": 2, "AES_FILTER_FAULTED": 3,
+                 "AES_FILTER_INVALID": 4}.get(attitude)) if attitude else None,
+            "attitudeUncertaintyDeg": alignment.get("attitudeUncertaintyDeg"),
+        },
+        "thermal": {
+            "throttle": bool(alerts_bool.get("alert_thermal_throttle")),
+            "shutdown": bool(alerts_bool.get("alert_thermal_shutdown")),
+            "heating": bool(alerts_bool.get("alert_is_heating")),
+            "psuThrottle": bool(alerts_bool.get("alert_power_supply_thermal_throttle")),
+        },
+        "power": {
+            "dishW": status.get("dish_power_w"),
+            "routerW": status.get("router_power_w"),
+            "upsuUptimeS": status.get("upsu_uptime_s"),
+            "battery": battery or None,
+        },
+        "gps": {
+            "verdict": gps.get("verdict"),
+            "valid": gps.get("valid"),
+            "sats": gps.get("sats"),
+            "inhibited": gps.get("inhibited"),
+            "hwCode": gps.get("hwCode"),
+            "issues": gps.get("issues", []),
+        },
+        "softwareUpdate": {
+            "state": swu.get("state"),
+            "stateAr": SWU_STATE_AR.get(swu.get("state"), {}).get("ar")
+            if swu.get("state") is not None else None,
+            "progress": swu.get("progress"),
+            "requiresReboot": swu.get("requiresReboot"),
+        },
+    }
+
+
+def errors_log(status, alerts_bool, outages=None):
+    """Unified error ledger (V2.3 «استخراج الأخطاء»).
+
+    Collects EVERY fault the dish announces, from all sources, into one
+    severity-ordered list:
+      - DishAlerts booleans (20 fields, 1005)
+      - legacy hardware codes (alert_hw_codes, kept for older dishes)
+      - disablement_code (1024)
+      - software update FAULTED / REBOOT_REQUIRED (1021/1026)
+      - actuator FAULTED + attitude filter faults (1027)
+      - reboot forensics (1032)
+      - ongoing outage with its cause (1014)
+      - recent outage log entries (History 1009)
+      - GPS issues (the full assess_gps ledger)
+    Each entry: {source, kind, code, en, ar, severity, detailAr, ts?}
+    """
+    alerts_bool = alerts_bool or {}
+    entries = []
+    now = time.time()
+
+    for key, meta in ALERTS_AR.items():
+        if alerts_bool.get("alert_" + key) is True:
+            entries.append({
+                "source": "alert", "kind": key, "code": None,
+                "en": meta["en"], "ar": meta["ar"],
+                "severity": meta["severity"],
+                "detailAr": "تنبيه معلن مباشرة من الطبق عبر gRPC",
+            })
+
+    for c in [c for c in status.get("alert_hw_codes", []) if c not in (0, None)]:
+        en, ar = code_label(c)
+        entries.append({
+            "source": "hw_code", "kind": "code_%d" % c, "code": c,
+            "en": en, "ar": ar, "severity": CODE_TABLE.get(c, {}).get("severity", "warn"),
+            "detailAr": "كود عتاد معلن (الأجهزة الأقدم)",
+        })
+
+    disablement = status.get("disablement_code")
+    if disablement not in (None, 0, 1):  # 0=unknown, 1=OKAY
+        en, ar, sev = disablement_label(disablement)
+        entries.append({
+            "source": "disablement", "kind": "disablement", "code": disablement,
+            "en": en, "ar": ar, "severity": sev,
+            "detailAr": "رمز إيقاف الخدمة المعلن (field 1024)",
+        })
+
+    swu = status.get("software_update_state")
+    if swu in (6, 8):  # REBOOT_REQUIRED / FAULTED
+        meta = SWU_STATE_AR.get(swu, {})
+        entries.append({
+            "source": "swupdate", "kind": "swupdate", "code": swu,
+            "en": meta.get("en", "SWU_%s" % swu), "ar": meta.get("ar", ""),
+            "severity": "hard" if swu == 8 else "warn",
+            "detailAr": "فشل تحديث البرامج — يلزم إعادة تشغيل"
+            if swu == 8 else "التحديث ينتظر إعادة تشغيل",
+        })
+
+    alignment = status.get("alignment") or {}
+    if alignment.get("actuatorState") == "ACT_FAULTED":
+        entries.append({
+            "source": "motion", "kind": "actuator_faulted", "code": None,
+            "en": "ACTUATOR_FAULTED", "ar": "محركات الحركة في حالة فشل",
+            "severity": "hard",
+            "detailAr": "الطبق يعلن فشل نظام المحركات (alignment_stats)",
+        })
+    att = {"AES_FILTER_FAULTED": 3, "AES_FILTER_INVALID": 4}.get(
+        alignment.get("attitudeState"))
+    if att is not None:
+        entries.append({
+            "source": "motion", "kind": "attitude_filter", "code": att,
+            "en": alignment.get("attitudeState"),
+            "ar": "مرشح الاتجاه %s" % ATTITUDE_AR.get(att, ""),
+            "severity": "hard",
+            "detailAr": "مرشح تقدير الاتجاه (IMU) معطل",
+        })
+
+    rr = status.get("reboot_reason_code")
+    rr_entry = REBOOT_AR.get(rr if rr is not None else 0)
+    if rr_entry and rr_entry["severity"] in ("warn", "hard"):
+        entries.append({
+            "source": "reboot", "kind": "reboot_reason", "code": rr,
+            "en": rr_entry["en"], "ar": "سبب آخر إعادة تشغيل: " + rr_entry["ar"],
+            "severity": rr_entry["severity"],
+            "detailAr": "bootcount=%s" % status.get("bootcount"),
+        })
+
+    outage = status.get("outage")
+    if outage and outage.get("ongoing"):
+        _, cause_ar = outage_cause_label(outage.get("cause", 0))
+        entries.append({
+            "source": "outage", "kind": "outage_ongoing", "code": outage.get("cause"),
+            "en": outage.get("causeName", "UNKNOWN"), "ar": "انقطاع جارٍ: " + cause_ar,
+            "severity": "warn",
+            "detailAr": "بدأ قبل %s" % _fmt_uptime((now - (outage.get("startTs") or now))),
+        })
+
+    if outages:
+        finished = [o for o in outages if not o.get("ongoing")][-5:]
+        for o in finished:
+            en, ar = outage_cause_label(o.get("cause", 0))
+            entries.append({
+                "source": "outage_log", "kind": "outage", "code": o.get("cause"),
+                "en": en, "ar": "انقطاع سابق: " + ar,
+                "severity": "info",
+                "detailAr": "مدته %.0f ث" % ((o.get("durationNs") or 0) / 1e9),
+                "ts": (o.get("startTsNs") or 0) / 1e9,
+            })
+
+    for issue in (assess_gps(status).get("issues") or []):
+        entries.append({
+            "source": "gps", "kind": issue.get("key"), "code": issue.get("code"),
+            "en": issue.get("en"), "ar": issue.get("ar"),
+            "severity": issue.get("severity"),
+            "detailAr": issue.get("noteAr"),
+        })
+
+    sev_rank = {"hard": 0, "warn": 1, "info": 2}
+    entries.sort(key=lambda e: sev_rank.get(e.get("severity"), 3))
+    counts = {"hard": 0, "warn": 0, "info": 0}
+    for e in entries:
+        counts[e["severity"]] = counts.get(e["severity"], 0) + 1
+    return {
+        "ts": now,
+        "total": len(entries),
+        "counts": counts,
+        "entries": entries,
+    }
 
 
 def run(status, obstruction, alerts_bool, stats, net=None, outages=None, power=None):

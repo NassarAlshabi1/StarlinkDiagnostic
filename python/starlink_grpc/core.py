@@ -263,6 +263,13 @@ def status_data(
         "country_code": getattr(device_info, "country_code", None),
         "bootcount": getattr(device_info, "bootcount", None),
         "build_id": getattr(device_info, "build_id", None),
+        # V2.3: extended hardware identity surface (DeviceInfo fields)
+        "board_rev": getattr(device_info, "board_rev", None),
+        "manufactured_version": getattr(device_info, "manufactured_version", None),
+        "anti_rollback_version": getattr(device_info, "anti_rollback_version", None),
+        "generation_number": getattr(device_info, "generation_number", None),
+        "software_partitions_equal": getattr(
+            device_info, "software_partitions_equal", None),
         "state": state,
         "uptime": getattr(getattr(status, "device_state", None), "uptime_s", None),
         "snr": None,  # obsoleted in the v42 service (upstream keeps the key)
@@ -313,9 +320,13 @@ def status_data(
         "reboot_reason": _enum_name(
             device.RebootReason, getattr(status, "reboot_reason", 0)
         ),
+        "reboot_reason_code": int(getattr(status, "reboot_reason", 0)),
         "gps_ready": getattr(gps_stats, "gps_valid", None),
         "gps_sats": getattr(gps_stats, "gps_sats", None),
         "gps_no_sats_after_ttff": getattr(gps_stats, "no_sats_after_ttff", None),
+        "gps_pnt_state": int(getattr(
+            gps_stats, "pnt_filter_convergence_state", 0))
+        if gps_stats is not None else None,
         "gps_enabled": (
             None if gps_stats is None or not gps_stats.HasField("inhibit_gps")
             else not bool(gps_stats.inhibit_gps)

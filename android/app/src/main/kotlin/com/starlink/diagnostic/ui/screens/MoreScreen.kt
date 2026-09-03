@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.DataObject
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -61,8 +62,9 @@ fun MoreScreen(vm: AppViewModel, nav: NavHostController) {
     }
 
     val items = listOf(
-        MoreItem("hardware", "HARDWARE", "خريطة العتاد الثمانية والأكواد المعلنة", Icons.Rounded.Memory),
-        MoreItem("gps", "GPS / GNSS", "الحالات الثلاث: unavailable / inhibited / hw failure", Icons.Rounded.GpsFixed),
+        MoreItem("hardware", "HARDWARE", "فحص عتاد شامل: الهوية، الجاهزية، التنبيهات، الحركة", Icons.Rounded.Memory),
+        MoreItem("errors", "الأخطاء والتنبيهات", "سجل موحد لكل ما يعلنه الطبق من أعطال مع الشدة", Icons.Rounded.ErrorOutline),
+        MoreItem("gps", "GPS / GNSS", "الحالات الثلاث + سجل أخطاء GPS التفصيلي", Icons.Rounded.GpsFixed),
         MoreItem("obstruction", "خريطة العرقلة", "خريطة قطبية SNR من الطبق (RPC 2008)", Icons.Rounded.Radar),
         MoreItem("raw", "RAW gRPC", "Status · History · Alerts · Obstruction · Diagnostics", Icons.Rounded.DataObject),
         MoreItem("network", "NETWORK", "هاتف ← راوتر ← طبق ← gRPC ← POP + الراوتر واختبار السرعة", Icons.Rounded.NetworkCheck),
@@ -116,7 +118,7 @@ fun MoreScreen(vm: AppViewModel, nav: NavHostController) {
                     Column(Modifier.padding(start = 12.dp)) {
                         Text("حول التطبيق", style = MaterialTheme.typography.titleMedium, color = StrongText)
                         Text(
-                            "v2.2.0 — سجل الإصدارات، البروتوكول، دليل البدء",
+                            "v2.3.0 — سجل الإصدارات، البروتوكول، دليل البدء",
                             style = MaterialTheme.typography.labelSmall,
                             color = MutedText,
                         )

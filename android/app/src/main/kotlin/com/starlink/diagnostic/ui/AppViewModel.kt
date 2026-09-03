@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.starlink.diagnostic.bridge.PythonBridge
 import com.starlink.diagnostic.diagnostics.Assessment
 import com.starlink.diagnostic.diagnostics.DbSummary
+import com.starlink.diagnostic.diagnostics.ErrorsReport
+import com.starlink.diagnostic.diagnostics.HardwareReport
 import com.starlink.diagnostic.diagnostics.HistStats
 import com.starlink.diagnostic.diagnostics.NetProbe
 import com.starlink.diagnostic.diagnostics.NetVerdict
@@ -87,6 +89,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _diag = MutableStateFlow(DiagUi())
     val diag: StateFlow<DiagUi> = _diag
+
+    // ── V2.3: hardware check (فحص الهاردوير) ─────────────────────────────
+    data class HwUi(
+        val loading: Boolean = false,
+        val report: HardwareReport? = null,
+        val errorAr: String? = null,
+    )
+
+    private val _hw = MutableStateFlow(HwUi())
+    val hw: StateFlow<HwUi> = _hw
+
+    // ── V2.3: unified error ledger (استخراج الأخطاء) ─────────────────────
+    data class ErrorsUi(
+        val loading: Boolean = false,
+        val report: ErrorsReport? = null,
+        val errorAr: String? = null,
+    )
+
+    private val _errors = MutableStateFlow(ErrorsUi())
+    val errors: StateFlow<ErrorsUi> = _errors
 
     // ── network prober ───────────────────────────────────────────────────
     data class NetUi(
@@ -496,6 +518,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _history.value = _history.value.copy(loading = false, errorAr = e.errorAr)
             } catch (e: Exception) {
                 _history.value = _history.value.copy(loading = false, errorAr = "${e.message}")
+            }
+        }
+    }
+
+    // ── V2.3: whole-dish hardware check ──────────────────────────────────
+    fun loadHardwareCheck() {
+        viewModelScope.launch {
+            _hw.value = _hw.value.copy(loading = true, errorAr = null)
+            try {
+                val data = PythonBridge.callSuspend("hardware_check")
+                _hw.value = _hw.value.copy(
+                    loading = false,
+                    report = HardwareReport.parse(data.optJSONObject("report") ?: JSONObject()),
+                )
+            } catch (e: PythonBridge.BridgeException) {
+                _hw.value = _hw.value.copy(loading = false, errorAr = e.errorAr)
+            } catch (e: Exception) {
+                _hw.value = _hw.value.copy(loading = false, errorAr = "${e.message}")
+            }
+        }
+    }
+
+    // ── V2.3: unified error ledger ───────────────────────────────────────
+    fun loadErrors() {
+        viewModelScope.launch {
+            _errors.value = _errors.value.copy(loading = true, errorAr = null)
+            try {
+                val data = PythonBridge.callSuspend("errors_log")
+                _errors.value = _errors.value.copy(
+                    loading = false,
+                    report = ErrorsReport.parse(data.optJSONObject("ledger") ?: JSONObject()),
+                )
+            } catch (e: PythonBridge.BridgeException) {
+                _errors.value = _errors.value.copy(loading = false, errorAr = e.errorAr)
+            } catch (e: Exception) {
+                _errors.value = _errors.value.copy(loading = false, errorAr = "${e.message}")
             }
         }
     }
