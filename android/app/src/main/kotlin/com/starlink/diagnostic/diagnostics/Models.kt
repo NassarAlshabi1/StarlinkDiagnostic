@@ -30,6 +30,34 @@ data class ObstructionInfo(
     val avgProlongedObstructionIntervalS: Double?,
 )
 
+/** v42 outage message (status.outage=1014). */
+data class OutageInfo(
+    val cause: Int,
+    val causeAr: String,
+    val ongoing: Boolean,
+    val startTs: Double?,
+    val durationS: Double?,
+)
+
+/** v42 alignment_stats=1027 (desired vs actual boresight). */
+data class AlignmentInfo(
+    val tiltAngleDeg: Double?,
+    val boresightAzimuthDeg: Double?,
+    val boresightElevationDeg: Double?,
+    val desiredAzimuthDeg: Double?,
+    val desiredElevationDeg: Double?,
+    val attitudeState: String?,
+    val attitudeUncertaintyDeg: Double?,
+    val actuatorState: String?,
+)
+
+/** Power draw from v42 upsu_stats=1043. */
+data class PowerInfo(
+    val dishW: Double?,
+    val routerW: Double?,
+    val upsuUptimeS: Long?,
+)
+
 data class StatusData(
     val state: String?,
     val uptimeS: Long?,
@@ -49,6 +77,19 @@ data class StatusData(
     val gps: GpsInfo,
     val boresightAzimuthDeg: Double?,
     val boresightElevationDeg: Double?,
+    // ── v42 evidence surface (V2.1) ──
+    val outage: OutageInfo?,
+    val disablementCode: Int?,
+    val disablementAr: String?,
+    val disablementSeverity: String?,
+    val softwareUpdateState: Int?,
+    val softwareUpdateStateAr: String?,
+    val swupdateRebootReady: Boolean?,
+    val dlRestrictedAr: String?,
+    val ulRestrictedAr: String?,
+    val mobilityClass: String?,
+    val alignment: AlignmentInfo?,
+    val power: PowerInfo?,
     val mode: String,
     val raw: JSONObject,
 ) {
@@ -102,6 +143,43 @@ data class StatusData(
                 ),
                 boresightAzimuthDeg = s.optDoubleOrNull("boresightAzimuthDeg"),
                 boresightElevationDeg = s.optDoubleOrNull("boresightElevationDeg"),
+                outage = s.optJSONObject("outage")?.let { o ->
+                    OutageInfo(
+                        cause = o.optInt("cause", 0),
+                        causeAr = o.optString("causeAr", ""),
+                        ongoing = o.optBoolean("ongoing", false),
+                        startTs = o.optDoubleOrNull("startTs"),
+                        durationS = o.optDoubleOrNull("durationS"),
+                    )
+                },
+                disablementCode = if (s.has("disablementCode") && !s.isNull("disablementCode")) s.optInt("disablementCode") else null,
+                disablementAr = s.optStringOrNull("disablementAr"),
+                disablementSeverity = s.optStringOrNull("disablementSeverity"),
+                softwareUpdateState = if (s.has("softwareUpdateState") && !s.isNull("softwareUpdateState")) s.optInt("softwareUpdateState") else null,
+                softwareUpdateStateAr = s.optStringOrNull("softwareUpdateStateAr"),
+                swupdateRebootReady = s.optBoolOrNull("swupdateRebootReady"),
+                dlRestrictedAr = s.optStringOrNull("dlRestrictedAr"),
+                ulRestrictedAr = s.optStringOrNull("ulRestrictedAr"),
+                mobilityClass = s.optStringOrNull("mobilityClass"),
+                alignment = s.optJSONObject("alignment")?.let { al ->
+                    AlignmentInfo(
+                        tiltAngleDeg = al.optDoubleOrNull("tiltAngleDeg"),
+                        boresightAzimuthDeg = al.optDoubleOrNull("boresightAzimuthDeg"),
+                        boresightElevationDeg = al.optDoubleOrNull("boresightElevationDeg"),
+                        desiredAzimuthDeg = al.optDoubleOrNull("desiredBoresightAzimuthDeg"),
+                        desiredElevationDeg = al.optDoubleOrNull("desiredBoresightElevationDeg"),
+                        attitudeState = al.optStringOrNull("attitudeState"),
+                        attitudeUncertaintyDeg = al.optDoubleOrNull("attitudeUncertaintyDeg"),
+                        actuatorState = al.optStringOrNull("actuatorState"),
+                    )
+                },
+                power = s.optJSONObject("power")?.let { p ->
+                    PowerInfo(
+                        dishW = p.optDoubleOrNull("dishW"),
+                        routerW = p.optDoubleOrNull("routerW"),
+                        upsuUptimeS = if (p.has("upsuUptimeS") && !p.isNull("upsuUptimeS")) p.optLong("upsuUptimeS") else null,
+                    )
+                },
                 mode = data.optString("mode", "real"),
                 raw = data.optJSONObject("raw") ?: JSONObject(),
             )
@@ -232,6 +310,7 @@ data class NetProbe(
     val grpcOk: Boolean?,
     val popLatencyMs: Double?,
     val errorAr: String?,
+    val targets: List<NetworkProber.IcmpTarget> = emptyList(),
 ) {
     fun toJson(): JSONObject {
         val o = JSONObject()
@@ -241,6 +320,18 @@ data class NetProbe(
         icmpOk?.let { o.put("icmpOk", it) }
         grpcOk?.let { o.put("grpcOk", it) }
         popLatencyMs?.let { o.put("popLatencyMs", it) }
+        if (targets.isNotEmpty()) {
+            val arr = JSONArray()
+            targets.forEach { t ->
+                val t0 = JSONObject()
+                t0.put("name", t.name)
+                t0.put("labelAr", t.labelAr)
+                t0.put("ok", t.ok)
+                t.latencyMs?.let { t0.put("latencyMs", it) }
+                arr.put(t0)
+            }
+            o.put("targets", arr)
+        }
         return o
     }
 }
@@ -358,3 +449,132 @@ fun JSONObject.optDoubleOrNull(key: String): Double? =
 
 fun JSONObject.optBoolOrNull(key: String): Boolean? =
     if (has(key) && !isNull(key)) optBoolean(key) else null
+
+// ── v42 additions: obstruction map / speedtest / router ─────────────────
+
+data class ObstructionMapData(
+    val numRows: Int,
+    val numCols: Int,
+    val snr: List<Double>,
+    val minElevationDeg: Double?,
+    val maxThetaDeg: Double?,
+    val referenceFrame: String?,
+    val source: String,
+) {
+    companion object {
+        fun parse(data: JSONObject): ObstructionMapData? {
+            val m = data.optJSONObject("map") ?: return null
+            val arr = m.optJSONArray("snr") ?: return null
+            val snr = mutableListOf<Double>()
+            for (i in 0 until arr.length()) snr.add(arr.optDouble(i, -1.0))
+            return ObstructionMapData(
+                numRows = m.optInt("numRows", 0),
+                numCols = m.optInt("numCols", 0),
+                snr = snr,
+                minElevationDeg = m.optDoubleOrNull("minElevationDeg"),
+                maxThetaDeg = m.optDoubleOrNull("maxThetaDeg"),
+                referenceFrame = m.optStringOrNull("referenceFrame"),
+                source = data.optString("source", "real"),
+            )
+        }
+    }
+}
+
+data class SpeedtestDirection(
+    val throughputsMbps: List<Double>,
+    val peakMbps: Double?,
+    val err: Int,
+)
+
+data class SpeedtestState(
+    val running: Boolean,
+    val down: SpeedtestDirection?,
+    val up: SpeedtestDirection?,
+    val demo: Boolean,
+) {
+    companion object {
+        fun parse(data: JSONObject): SpeedtestState {
+            fun dir(name: String): SpeedtestDirection? {
+                val d = data.optJSONObject(name) ?: return null
+                val arr = d.optJSONArray("throughputsMbps")
+                val list = mutableListOf<Double>()
+                if (arr != null) for (i in 0 until arr.length()) list.add(arr.optDouble(i, 0.0))
+                return SpeedtestDirection(
+                    throughputsMbps = list,
+                    peakMbps = d.optDoubleOrNull("peakMbps"),
+                    err = d.optInt("err", 0),
+                )
+            }
+            return SpeedtestState(
+                running = data.optBoolean("running", false),
+                down = dir("down"),
+                up = dir("up"),
+                demo = data.optBoolean("demo", false),
+            )
+        }
+    }
+}
+
+data class RouterClient(
+    val name: String?,
+    val mac: String?,
+    val ip: String?,
+    val signalDbm: Double?,
+)
+
+data class RouterInfo(
+    val reachable: Boolean,
+    val tried: Boolean,
+    val host: String,
+    val port: Int,
+    val id: String?,
+    val hardwareVersion: String?,
+    val softwareVersion: String?,
+    val uptimeS: Long?,
+    val wanIp: String?,
+    val dishPingLatencyMs: Double?,
+    val popPingLatencyMs: Double?,
+    val clients: List<RouterClient>,
+    val errorAr: String?,
+) {
+    companion object {
+        fun parse(data: JSONObject): RouterInfo {
+            val clients = mutableListOf<RouterClient>()
+            val arr = data.optJSONArray("clients")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val c = arr.optJSONObject(i) ?: continue
+                    clients.add(
+                        RouterClient(
+                            name = c.optStringOrNull("name"),
+                            mac = c.optStringOrNull("mac"),
+                            ip = c.optStringOrNull("ip"),
+                            signalDbm = c.optDoubleOrNull("signalDbm"),
+                        ),
+                    )
+                }
+            }
+            return RouterInfo(
+                reachable = data.optBoolean("reachable", false),
+                tried = data.optBoolean("tried", false),
+                host = data.optString("host", "192.168.1.1"),
+                port = data.optInt("port", 9000),
+                id = data.optStringOrNull("id"),
+                hardwareVersion = data.optStringOrNull("hardwareVersion"),
+                softwareVersion = data.optStringOrNull("softwareVersion"),
+                uptimeS = if (data.has("uptimeS") && !data.isNull("uptimeS")) data.optLong("uptimeS") else null,
+                wanIp = data.optStringOrNull("wanIp"),
+                dishPingLatencyMs = data.optDoubleOrNull("dishPingLatencyMs"),
+                popPingLatencyMs = data.optDoubleOrNull("popPingLatencyMs"),
+                clients = clients,
+                errorAr = data.optStringOrNull("errorAr"),
+            )
+        }
+    }
+}
+
+data class DishPingTarget(
+    val target: String,
+    val dropRate: Double,
+    val latencyMs: Double,
+)

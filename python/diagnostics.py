@@ -39,6 +39,77 @@ CODE_TABLE = {
     # failure is announced as code 14. Not present in the older protoset —
     # documented in docs/DIAGNOSTICS.md.
     14: {"component": "GPS",                "componentAr": "نظام تحديد المواقع",   "severity": "hard"},
+    # NOTE: alerts_hardware was REMOVED in API v42; on modern dishes the
+    # authoritative codes are disablement_code (below) + outage causes.
+}
+
+# v42 UtDisablementCode — the modern "self-test/disablement" signal (field 1024)
+DISABLEMENT_AR = {
+    0:  {"en": "UNKNOWN_STATE",               "ar": "حالة غير معروفة",              "severity": "info"},
+    1:  {"en": "OKAY",                        "ar": "سليم — لا إيقاف",              "severity": "info"},
+    2:  {"en": "NO_ACTIVE_ACCOUNT",           "ar": "لا حساب نشط",                  "severity": "hard"},
+    3:  {"en": "TOO_FAR_FROM_SERVICE_ADDRESS", "ar": "بعيد جداً عن عنوان الخدمة",     "severity": "hard"},
+    4:  {"en": "IN_OCEAN",                     "ar": "في المحيط",                    "severity": "hard"},
+    6:  {"en": "BLOCKED_COUNTRY",              "ar": "دولة محجوبة",                  "severity": "hard"},
+    7:  {"en": "DATA_OVERAGE_SANDBOX_POLICY",  "ar": "تجاوز حصة البيانات (سياسة)",    "severity": "warn"},
+    8:  {"en": "CELL_IS_DISABLED",             "ar": "الخلية موقوفة",                 "severity": "warn"},
+    10: {"en": "ROAM_RESTRICTED",              "ar": "تجوال مقيّد",                   "severity": "hard"},
+    11: {"en": "UNKNOWN_LOCATION",             "ar": "موقع غير معروف",               "severity": "hard"},
+    12: {"en": "ACCOUNT_DISABLED",             "ar": "الحساب موقوف",                  "severity": "hard"},
+    13: {"en": "UNSUPPORTED_VERSION",          "ar": "إصدار غير مدعوم",               "severity": "hard"},
+    14: {"en": "MOVING_TOO_FAST_FOR_POLICY",   "ar": "حركة أسرع من المسموح",          "severity": "warn"},
+    15: {"en": "UNDER_AVIATION_FLYOVER_LIMITS", "ar": "دون حدود طيران الطيران",        "severity": "warn"},
+    16: {"en": "BLOCKED_AREA",                 "ar": "منطقة محجوبة",                  "severity": "hard"},
+}
+
+# v42 DishOutage.Cause — outage attribution from the dish's own log
+OUTAGE_CAUSE_AR = {
+    0:  {"en": "UNKNOWN",            "ar": "سبب غير معروف"},
+    1:  {"en": "BOOTING",            "ar": "إقلاع/إعادة تشغيل"},
+    2:  {"en": "STOWED",              "ar": "الطبق مطوي (stowed)"},
+    3:  {"en": "THERMAL_SHUTDOWN",    "ar": "إيقاف حراري"},
+    4:  {"en": "NO_SCHEDULE",         "ar": "لا جدولة — بحث عن شبكة"},
+    5:  {"en": "NO_SATS",             "ar": "لا أقمار مرئية"},
+    6:  {"en": "OBSTRUCTED",          "ar": "عرقلة مجال الرؤية"},
+    7:  {"en": "NO_DOWNLINK",         "ar": "لا قناة هابطة من القمر"},
+    8:  {"en": "NO_PINGS",            "ar": "فقد ping كامل"},
+    9:  {"en": "ACTUATOR_ACTIVITY",   "ar": "حركة محركات الطبق"},
+    10: {"en": "CABLE_TEST",          "ar": "اختبار الكابل"},
+    11: {"en": "SLEEPING",            "ar": "وضع النوم/توفير الطاقة"},
+    13: {"en": "SKY_SEARCH",          "ar": "بحث في السماء"},
+    14: {"en": "INHIBIT_RF",          "ar": "ترددات موقوفة عمداً"},
+}
+
+# v42 SoftwareUpdateState (field 1021)
+SWU_STATE_AR = {
+    0: {"en": "UNKNOWN",          "ar": "غير معروف",       "severity": "info"},
+    1: {"en": "IDLE",             "ar": "خامل",            "severity": "info"},
+    2: {"en": "FETCHING",         "ar": "يجلب التحديث",    "severity": "warn"},
+    3: {"en": "PRE_CHECK",        "ar": "فحص مسبق",        "severity": "warn"},
+    4: {"en": "WRITING",          "ar": "يكتب التحديث",    "severity": "warn"},
+    5: {"en": "POST_CHECK",       "ar": "فحص لاحق",        "severity": "warn"},
+    6: {"en": "REBOOT_REQUIRED",  "ar": "يتطلب إعادة تشغيل", "severity": "warn"},
+    7: {"en": "DISABLED",         "ar": "التحديث موقوف",   "severity": "warn"},
+    8: {"en": "FAULTED",          "ar": "فشل التحديث",     "severity": "hard"},
+}
+
+# v42 RateLimitReason (fields 1044/1045) — bandwidth restriction badges
+RLR_AR = {
+    0: {"en": "UNKNOWN",            "ar": "غير معروف",            "severity": "info"},
+    1: {"en": "NO_LIMIT",            "ar": "بلا تقييد",            "severity": "info"},
+    2: {"en": "POLICY_LIMIT",        "ar": "تقييد سياسة الاستخدام",  "severity": "warn"},
+    3: {"en": "USER_CUSTOM_LIMIT",   "ar": "تقييد من المستخدم",      "severity": "warn"},
+    5: {"en": "OVERAGE_LIMIT",       "ar": "تقييد تجاوز الحصة",      "severity": "warn"},
+    6: {"en": "LOW_SPEED_POLICY_LIMIT", "ar": "سياسة سرعة منخفضة",   "severity": "warn"},
+}
+
+# v42 AttitudeEstimationState — alignment filter health
+ATTITUDE_AR = {
+    0: "إعادة تهيئة المرشح",
+    1: "المرشح غير مستقر (unconverged)",
+    2: "المرشح مستقر (converged)",
+    3: "المرشح فاشل",
+    4: "المرشح غير صالح",
 }
 
 # The 8 hardware components shown on the HARDWARE page.
@@ -75,6 +146,73 @@ def code_label(code):
     if entry:
         return entry["component"], entry["componentAr"]
     return "CODE_%d" % code, "رمز غير معروف (%d)" % code
+
+
+def disablement_label(code):
+    entry = DISABLEMENT_AR.get(code)
+    if entry:
+        return entry["en"], entry["ar"], entry["severity"]
+    return "UTD_%d" % code, "رمز إيقاف غير معروف (%d)" % code, "warn"
+
+
+def outage_cause_label(cause):
+    entry = OUTAGE_CAUSE_AR.get(cause)
+    if entry:
+        return entry["en"], entry["ar"]
+    return "CAUSE_%d" % cause, "سبب غير معروف (%d)" % cause
+
+
+def assess_outages(outages):
+    """Attribute outages recorded in the dish's history buffer.
+
+    outages: list of outage_dict() entries (cause/startTsNs/durationNs).
+    Returns a JSON-able attribution summary: per-cause buckets, last outage,
+    and the single most impactful cause.
+    """
+    if not outages:
+        return {"total": 0, "ongoing": None, "buckets": [], "last": None}
+
+    buckets = {}
+    for o in outages:
+        cause = o.get("cause", 0)
+        en, ar = outage_cause_label(cause)
+        b = buckets.setdefault(
+            cause, {"cause": cause, "en": en, "ar": ar, "count": 0, "totalS": 0.0}
+        )
+        b["count"] += 1
+        b["totalS"] += (o.get("durationNs") or 0) / 1e9
+
+    ordered = sorted(buckets.values(), key=lambda b: (-b["totalS"], -b["count"]))
+    finished = [o for o in outages if not o.get("ongoing")]
+    last = None
+    if finished:
+        o = max(finished, key=lambda x: (x.get("startTsNs") or 0))
+        en, ar = outage_cause_label(o.get("cause", 0))
+        last = {
+            "cause": o.get("cause"),
+            "causeEn": en,
+            "causeAr": ar,
+            "startTs": (o.get("startTsNs") or 0) / 1e9,
+            "durationS": round((o.get("durationNs") or 0) / 1e9, 1),
+        }
+    ongoing = next((o for o in outages if o.get("ongoing")), None)
+    if ongoing is not None:
+        en, ar = outage_cause_label(ongoing.get("cause", 0))
+        ongoing = {
+            "cause": ongoing.get("cause"),
+            "causeEn": en,
+            "causeAr": ar,
+            "startTs": (ongoing.get("startTsNs") or 0) / 1e9,
+        }
+    return {
+        "total": len(outages),
+        "ongoing": ongoing,
+        "buckets": [
+            {k: (round(v, 1) if isinstance(v, float) else v) for k, v in b.items()}
+            for b in ordered
+        ],
+        "last": last,
+    }
 
 
 def assess_gps(status):
@@ -203,18 +341,22 @@ def _hardware_page(status, gps):
     return out
 
 
-def run(status, obstruction, alerts_bool, stats, net=None):
+def run(status, obstruction, alerts_bool, stats, net=None, outages=None, power=None):
     """Run the full assessment.
 
     Args:
-        status: status_data()[0] dict plus V2 extensions (alert_hw_codes,
-            gps_inhibit_raw, eth_speed_mbps, is_snr_persistently_low).
+        status: status_data()[0] dict plus V2 extensions (v42 fields:
+            disablement_code, software_update_state, alignment, outage,
+            dish_power_w, dl/ul_restricted_reason).
         obstruction: status_data()[1] dict.
         alerts_bool: status_data()[2] dict (alert_* booleans).
         stats: history_stats() 7-dict tuple (general, ping_drop, runs,
             latency, loaded, usage).
         net: optional dict from the Kotlin network prober:
-            {phoneIp, gateway, dishPingOk, tcp9200Ok, grpcOk, popLatencyMs}.
+            {phoneIp, gateway, dishPingOk, tcp9200Ok, grpcOk, popLatencyMs,
+             targets: [{name, ok, latencyMs}], router: {...}}.
+        outages: optional list of history outage records (v42 field 1009).
+        power: optional history_power_stats() dict (v42 power_in 1010).
 
     Returns the assessment dict (JSON-able).
     """
@@ -228,12 +370,18 @@ def run(status, obstruction, alerts_bool, stats, net=None):
 
     gps = assess_gps(status)
 
+    # v42 disablement code — the modern authoritative self-test verdict
+    disablement = status.get("disablement_code")
+    disablement_known = disablement is not None and disablement != 0
+    dis_en, dis_ar, dis_sev = disablement_label(disablement or 0)
+    disablement_bad = disablement_known and dis_sev in ("warn", "hard")
+
     # ── 1) Hardware Self-Test ────────────────────────────────────────────
-    if hard_codes:
+    if hard_codes or (disablement_known and dis_sev == "hard"):
         self_status = "FAILED"
-    elif warn_codes or any(v for k, v in (alerts_bool or {}).items() if isinstance(v, bool)):
+    elif disablement_bad or warn_codes or any(v for k, v in (alerts_bool or {}).items() if isinstance(v, bool)):
         self_status = "WARN"
-    elif not status.get("alert_hw_codes"):
+    elif not status.get("alert_hw_codes") and not disablement_known:
         self_status = "UNKNOWN"
     else:
         self_status = "PASSED"
@@ -248,11 +396,16 @@ def run(status, obstruction, alerts_bool, stats, net=None):
             "codes": hw_codes,
             "primaryCode": primary_code,
             "component": comp_en,
+            "disablementCode": disablement if disablement_known else None,
+            "disablementEn": dis_en if disablement_known else None,
+            "disablementAr": dis_ar if disablement_known else None,
             "alertsBitfield": status.get("alerts"),
             "alertFlags": {k: v for k, v in (alerts_bool or {}).items() if v},
         },
         (
-            "الطبق يعلن كوداً صلباً: %d (%s)" % (primary_code, comp_ar)
+            "الطبق يعلن إيقافاً صلباً: %s (%s)" % (dis_en, dis_ar)
+            if self_status == "FAILED" and not hard_codes and disablement_known
+            else "الطبق يعلن كوداً صلباً: %d (%s)" % (primary_code, comp_ar)
             if self_status == "FAILED"
             else "تنبيهات تشغيلية غير صارمة" if self_status == "WARN"
             else "لا أكواد عتاد معلنة"
@@ -260,7 +413,11 @@ def run(status, obstruction, alerts_bool, stats, net=None):
     ))
 
     # ── 2) Component-specific follow-up (the GPS chain) ──────────────────
-    if primary_code is not None and comp_en == "GPS":
+    # Triggered by an announced GPS code (legacy dishes) OR any non-ok GPS
+    # verdict (v42 dishes no longer announce per-component codes).
+    if (primary_code is not None and comp_en == "GPS") or gps["verdict"] in (
+        GPS_NO_FIX, GPS_INHIBITED, GPS_HW_FAIL
+    ):
         g = gps
         steps.append(_step(
             "gps_valid", "GPS Valid?", "هل GPS صالح؟",
@@ -316,6 +473,8 @@ def run(status, obstruction, alerts_bool, stats, net=None):
 
     # ── 4) RF / PHY ──────────────────────────────────────────────────────
     drop = status.get("pop_ping_drop_rate")
+    dl_r, ul_r = status.get("dl_restricted_reason"), status.get("ul_restricted_reason")
+    restricted = [r for r in (dl_r, ul_r) if r not in (None, 0, 1)]
     rf_ev = {
         "isSnrAboveNoiseFloor": status.get("is_snr_above_noise_floor"),
         "isSnrPersistentlyLow": status.get("is_snr_persistently_low"),
@@ -323,6 +482,8 @@ def run(status, obstruction, alerts_bool, stats, net=None):
         "currentlyObstructed": status.get("currently_obstructed"),
         "fractionObstructed": status.get("fraction_obstructed"),
         "popPingLatencyMs": status.get("pop_ping_latency_ms"),
+        "dlRestricted": RLR_AR.get(dl_r, {}).get("en") if dl_r is not None else None,
+        "ulRestricted": RLR_AR.get(ul_r, {}).get("en") if ul_r is not None else None,
     }
     if status.get("is_snr_persistently_low"):
         rf_status, rf_note = "fail", "SNR منخفض بشكل مستمر — مشكلة RF محتملة"
@@ -330,6 +491,11 @@ def run(status, obstruction, alerts_bool, stats, net=None):
         rf_status, rf_note = "warn", "SNR تحت حد الضجيج"
     elif (drop or 0) > 0.03:
         rf_status, rf_note = "warn", "نسبة فقد ping مرتفعة (%.1f%%)" % (drop * 100)
+    elif restricted:
+        rf_status = "warn"
+        rf_note = "النطاق مقيّد: " + "؛ ".join(
+            RLR_AR.get(r, {}).get("ar", "") for r in restricted
+        )
     else:
         rf_status, rf_note = "pass", "قناة RF سليمة"
     steps.append(_step("rf_phy", "RF / PHY", "الترددات والقناة الفيزيائية",
@@ -359,12 +525,21 @@ def run(status, obstruction, alerts_bool, stats, net=None):
             n_note,
         ))
 
-    # ── 6) History corroboration ─────────────────────────────────────────
+    # ── 6) History corroboration (+ loaded latency) ─────────────────────
     gen, ping_drop, runs, latency = stats[0], stats[1], stats[2], stats[3]
     if gen.get("samples", 0) > 0:
         total = ping_drop.get("total_ping_drop") or 0.0
         full = ping_drop.get("count_full_ping_drop") or 0
         h_status = "fail" if full > 0 else ("warn" if total > 0.02 else "pass")
+        # Loaded latency: idle bucket (index 0) vs busiest bucket with data
+        buckets = stats[4].get("load_bucket_median_latency[]") or []
+        samples_b = stats[4].get("load_bucket_samples[]") or []
+        idle = buckets[0] if samples_b and samples_b[0] else None
+        loaded = None
+        for i in range(len(buckets) - 1, 0, -1):
+            if i < len(samples_b) and samples_b[i]:
+                loaded = buckets[i]
+                break
         steps.append(_step(
             "history", "History Stats", "إحصاءات النافذة الأخيرة", h_status,
             {
@@ -373,11 +548,117 @@ def run(status, obstruction, alerts_bool, stats, net=None):
                 "countFullPingDrop": full,
                 "meanAllPingLatency": latency.get("mean_all_ping_latency"),
                 "meanFullPingLatency": latency.get("mean_full_ping_latency"),
+                "idleMedianLatencyMs": idle,
+                "loadedMedianLatencyMs": loaded,
                 "downloadUsageMB": round((stats[5].get("download_usage") or 0) / 1e6, 1),
                 "uploadUsageMB": round((stats[5].get("upload_usage") or 0) / 1e6, 1),
             },
-            "فقد إجمالي %.2f%% عبر %d عينة، انقطاعات كاملة: %d"
-            % (total * 100, gen.get("samples", 0), full),
+            "فقد إجمالي %.2f%% عبر %d عينة، انقطاعات كاملة: %d%s"
+            % (
+                total * 100, gen.get("samples", 0), full,
+                " — الكمون تحت الحمل %.0f ms مقابل %.0f ms بلا حمل"
+                % (loaded, idle) if (loaded and idle) else "",
+            ),
+        ))
+
+    # ── 7) Outage attribution (v42 outages from the dish's own log) ────
+    attribution = assess_outages(outages or [])
+    if attribution["total"] > 0:
+        b = attribution["buckets"][0] if attribution["buckets"] else None
+        ongoing = attribution.get("ongoing")
+        o_status = "warn" if ongoing else "info"
+        o_note = (
+            "انقطاع جارٍ الآن: %s" % ongoing["causeAr"] if ongoing
+            else "الأكثر تأثيراً: %s (%d مرة، %.0f ثانية إجمالاً)"
+            % (b["ar"], b["count"], b["totalS"]) if b
+            else "لا تفاصيل"
+        )
+        steps.append(_step(
+            "outage_attribution", "Outage Attribution", "إسناد أسباب الانقطاع",
+            o_status,
+            {
+                "totalOutages": attribution["total"],
+                "ongoing": ongoing,
+                "last": attribution.get("last"),
+                "buckets": attribution["buckets"],
+            },
+            o_note,
+        ))
+
+    # ── 8) Alignment (v42 alignment_stats: desired vs actual boresight) ─
+    align = status.get("alignment")
+    if align:
+        a_state = align.get("attitudeState") or ""
+        az, el = align.get("boresightAzimuthDeg"), align.get("boresightElevationDeg")
+        d_az = align.get("desiredBoresightAzimuthDeg")
+        d_el = align.get("desiredBoresightElevationDeg")
+        unc = align.get("attitudeUncertaintyDeg")
+        delta_az = abs(az - d_az) if (az is not None and d_az is not None) else None
+        delta_el = abs(el - d_el) if (el is not None and d_el is not None) else None
+        if a_state in ("AES_FILTER_FAULTED", "AES_FILTER_INVALID"):
+            a_status, a_note = "fail", "مرشح تقدير الاتجاه فاشل — المحاذاة غير موثوقة"
+        elif a_state == "AES_FILTER_UNCONVERGED" or (unc is not None and unc > 5.0):
+            a_status, a_note = "warn", "تقدير الاتجاه غير مستقر بعد"
+        else:
+            a_status, a_note = "pass", "المحاذاة ضمن الحدود"
+        steps.append(_step(
+            "alignment", "Alignment", "المحاذاة والاتجاه", a_status,
+            {
+                "boresightAzimuthDeg": az,
+                "boresightElevationDeg": el,
+                "desiredAzimuthDeg": d_az,
+                "desiredElevationDeg": d_el,
+                "deltaAzimuthDeg": round(delta_az, 1) if delta_az is not None else None,
+                "deltaElevationDeg": round(delta_el, 1) if delta_el is not None else None,
+                "tiltAngleDeg": align.get("tiltAngleDeg"),
+                "attitudeState": a_state,
+                "attitudeUncertaintyDeg": unc,
+                "actuatorState": align.get("actuatorState"),
+            },
+            a_note,
+        ))
+
+    # ── 9) Software update state (v42 field 1021 + stats) ────────────────
+    swu = status.get("software_update_state")
+    if swu is not None and swu != 1:  # 1 = IDLE -> nothing interesting
+        entry = SWU_STATE_AR.get(swu, {"en": "SWU_%d" % swu, "ar": "حالة غير معروفة", "severity": "info"})
+        swu_ev = {"state": entry["en"], "stateAr": entry["ar"]}
+        stats_swu = status.get("software_update_stats")
+        if stats_swu:
+            swu_ev["progress"] = stats_swu.get("progress")
+            swu_ev["requiresReboot"] = stats_swu.get("requiresReboot")
+        swu_ev["rebootReady"] = status.get("swupdate_reboot_ready")
+        if entry["severity"] == "hard":
+            s_status, s_note = "fail", "فشل تحديث البرنامج (%s)" % entry["ar"]
+        elif entry["severity"] == "warn":
+            s_status, s_note = "warn", "التحديث البرمجي نشط: %s" % entry["ar"]
+        else:
+            s_status, s_note = "info", "حالة التحديث: %s" % entry["ar"]
+        steps.append(_step(
+            "swupdate", "Software Update", "التحديث البرمجي", s_status, swu_ev, s_note,
+        ))
+
+    # ── 10) Power (v42 upsu_stats + power_in history) ────────────────────
+    dish_w = status.get("dish_power_w")
+    router_w = status.get("router_power_w")
+    if dish_w is not None or (power and power.get("avgPowerW") is not None):
+        p_ev = {
+            "dishPowerW": dish_w,
+            "routerPowerW": router_w,
+        }
+        if power:
+            p_ev.update({
+                "windowAvgPowerW": power.get("avgPowerW"),
+                "windowMinPowerW": power.get("minPowerW"),
+                "windowMaxPowerW": power.get("maxPowerW"),
+                "windowKWh": power.get("kWh"),
+                "windowSamples": power.get("samples"),
+            })
+        p_note = ("سحب الطبق الحالي: %.0f W" % dish_w) if dish_w is not None else "لا قراءة لحظية"
+        if power and power.get("kWh") is not None:
+            p_note += " — استهلاك النافذة: %.3f kWh" % power["kWh"]
+        steps.append(_step(
+            "power", "Power", "الطاقة", "info", p_ev, p_note,
         ))
 
     # ── Final assessment ─────────────────────────────────────────────────
@@ -385,7 +666,7 @@ def run(status, obstruction, alerts_bool, stats, net=None):
     # functional step (boot/rf/network). A completed outage inside the
     # history window (history step fail) is network weather, not a fault —
     # it shapes the verdict text but not the failed flag.
-    core_fail_ids = ("self_test", "init", "rf_phy", "net_path")
+    core_fail_ids = ("self_test", "init", "rf_phy", "net_path", "alignment", "swupdate")
     failed_steps = [s for s in steps if s["status"] == "fail" and s["id"] in core_fail_ids]
     warn_steps = [s for s in steps if s["status"] == "warn"]
 
@@ -404,12 +685,13 @@ def run(status, obstruction, alerts_bool, stats, net=None):
         elif comp_en == "GPS":
             verdict_ar = (
                 "فشل اختبار عتاد GPS (كود %d): Valid=%s، الأقمار=%s، inhibit=%s. "
-                "الدليل يشير إلى مشكلة GPS، لكن يُنصح بإعادة التشغيل وإعادة الاختبار قبل الاستبدال."
+                "الدليل يشير إلى مشكلة GPS، لكن يُنصح بإعادة التشغيل وإعادة الاختبار قبل الاستبدال. "
+                "يمكنك إعادة تفعيل GPS مباشرة من شاشة التحكم في هذا التطبيق."
                 % (gps["hwCode"] or primary_code, gps["valid"], gps["sats"], gps["inhibited"])
             )
             next_tests = [
+                "أعد تفعيل GPS من شاشة DISH CONTROL (زر GPS) ثم أعد التشخيص الكامل",
                 "أعد تشغيل الطبق (Restart) ثم أعد التشخيص الكامل",
-                "تأكد أن الطبق يعمل بأحدث firmware ثم أعد الاختبار",
                 "إن تكرر الكود بعد إعادة التشغيل: تواصل مع الدعم مع تقرير التشخيص PDF",
             ]
         else:
@@ -437,10 +719,13 @@ def run(status, obstruction, alerts_bool, stats, net=None):
             "component": comp_en,
             "componentAr": comp_ar,
             "codes": hw_codes,
+            "disablementCode": disablement if disablement_known else None,
+            "disablementAr": dis_ar if disablement_known else None,
         },
         "gps": gps,
         "hardware": _hardware_page(status, gps),
         "steps": steps,
+        "outages": assess_outages(outages or []),
         "final": {
             "verdictAr": verdict_ar,
             "nextTests": next_tests,
@@ -492,6 +777,37 @@ def network_verdict(net):
             "labelAr": "زمن الوصول إلى POP (من الطبق)",
             "ok": True,
             "detail": "%.1f ms" % pop,
+        })
+
+    # Extended ICMP targets (V2.1): dish, CGNAT gateway, public resolvers
+    for t in net.get("targets") or []:
+        lat = t.get("latencyMs")
+        hops.append({
+            "hop": "icmp_%s" % t.get("name", ""),
+            "labelAr": t.get("labelAr") or t.get("name", "target"),
+            "ok": bool(t.get("ok")),
+            "detail": ("%.1f ms" % lat) if lat is not None else (
+                "يرد" if t.get("ok") else "لا يرد/محجوب (معلومي)"
+            ),
+        })
+
+    # Router gRPC diagnostics (V2.1): wifi_get_status on the router itself
+    router = net.get("router")
+    if isinstance(router, dict) and router.get("reachable"):
+        r_lat = router.get("popPingLatencyMs")
+        r_dish = router.get("dishPingLatencyMs")
+        detail = "الراوتر يستجيب عبر gRPC (192.168.1.1:9000)"
+        if r_dish is not None:
+            detail += " — ping للطبق %.1f ms" % r_dish
+        if r_lat is not None:
+            detail += "، للـ POP %.1f ms" % r_lat
+        hops.append({"hop": "router_grpc", "labelAr": "راوتر ستارلينك (gRPC)", "ok": True, "detail": detail})
+    elif isinstance(router, dict) and router.get("tried"):
+        hops.append({
+            "hop": "router_grpc",
+            "labelAr": "راوتر ستارلينك (gRPC)",
+            "ok": False,
+            "detail": router.get("errorAr") or "لا استجابة gRPC على 192.168.1.1:9000 (معلومي — قد يكون الراوتر غير ستارلينك)",
         })
 
     if grpc_ok:

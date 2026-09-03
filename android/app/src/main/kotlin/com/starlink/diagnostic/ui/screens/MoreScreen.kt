@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.GpsFixed
@@ -53,9 +54,10 @@ fun MoreScreen(vm: AppViewModel, nav: NavHostController) {
     val items = listOf(
         MoreItem("hardware", "HARDWARE", "خريطة العتاد الثمانية والأكواد المعلنة", Icons.Rounded.Memory),
         MoreItem("gps", "GPS / GNSS", "الحالات الثلاث: unavailable / inhibited / hw failure", Icons.Rounded.GpsFixed),
+        MoreItem("obstruction", "خريطة العرقلة", "خريطة قطبية SNR من الطبق (RPC 2008)", Icons.Rounded.Radar),
         MoreItem("raw", "RAW gRPC", "Status · History · Alerts · Obstruction · Diagnostics", Icons.Rounded.DataObject),
-        MoreItem("network", "NETWORK", "هاتف ← راوتر ← طبق ← gRPC ← POP", Icons.Rounded.NetworkCheck),
-        MoreItem("control", "DISH CONTROL", "Restart · Stow · Unstow مع تأكيد", Icons.Rounded.RestartAlt),
+        MoreItem("network", "NETWORK", "هاتف ← راوتر ← طبق ← gRPC ← POP + الراوتر واختبار السرعة", Icons.Rounded.NetworkCheck),
+        MoreItem("control", "DISH CONTROL", "Restart · Stow · GPS · وضع النوم", Icons.Rounded.RestartAlt),
         MoreItem("settings", "الإعدادات", "العنوان، المنفذ، الوضع التجريبي، العينة", Icons.Rounded.Settings),
     )
 

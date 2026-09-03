@@ -97,6 +97,36 @@ fun ControlScreen(vm: AppViewModel) {
                 onClick = { pending = "unstow" },
             )
 
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "أدوات v42 المتقدمة",
+                style = MaterialTheme.typography.titleMedium,
+                color = SkySoft,
+            )
+            Spacer(Modifier.height(8.dp))
+            ControlCard(
+                title = "📡 إعادة تفعيل GPS",
+                body = "يرسل dish_inhibit_gps=2014 لإلغاء توقف GPS. إذا كان الطبق يعلن " +
+                    "GPS موقوفاً (inhibited) مع كود فشل ذاتي، فهذا هو الإجراء الموصى به قبل أي قرارة عطل.",
+                danger = false,
+                onClick = { pending = "gps_enable" },
+            )
+            Spacer(Modifier.height(10.dp))
+            ControlCard(
+                title = "🌙 جدولة وضع النوم (Power Save)",
+                body = "يرسل dish_power_save=2013: بداية من منتصف الليل المحلي لمدة 8 ساعات " +
+                    "(أو بدونه للإلغاء). الطبق لن يستقبل أثناء النوم — ينصح فقط إذا كنت لا تستخدم الخدمة ليلاً.",
+                danger = false,
+                onClick = { pending = "power_save" },
+            )
+            Spacer(Modifier.height(10.dp))
+            ControlCard(
+                title = "☀️ إلغاء وضع النوم",
+                body = "تعطيل جدولة توفير الطاقة وإعادة الطبق للعمل الدائم.",
+                danger = false,
+                onClick = { pending = "power_save_off" },
+            )
+
             lastNote?.let {
                 Spacer(Modifier.height(12.dp))
                 Surface(
@@ -126,6 +156,22 @@ fun ControlScreen(vm: AppViewModel) {
                 "سيُطوى الطبق في وضع التخزين وقد تتأثر الخدمة. متابعة؟",
                 "نعم، طوِ الطبق",
             )
+            "gps_enable" -> Triple(
+                "تأكيد تفعيل GPS",
+                "سيُرسل أمر إلغاء توقف GPS إلى الطبق (dish_inhibit_gps). بعد التفعيل أعد التشخيص الكامل " +
+                    "لمعرفة إن كان فشل GPS عطلاً حقيقياً أم مجرد توقف عمداً. متابعة؟",
+                "نعم، فعّل GPS",
+            )
+            "power_save" -> Triple(
+                "تأكيد جدولة النوم",
+                "سيبدأ وضع توفير الطاقة يومياً من منتصف الليل لمدة 8 ساعات. لن تتوفر خدمة أثناءه. متابعة؟",
+                "نعم، جدول النوم",
+            )
+            "power_save_off" -> Triple(
+                "تأكيد إلغاء النوم",
+                "سيُلغى وضع توفير الطاقة ويعود الطبق للعمل الدائم. متابعة؟",
+                "نعم، ألغِ النوم",
+            )
             else -> Triple(
                 "تأكيد Unstow",
                 "سيُفك الطبق ويستأنف العمل. متابعة؟",
@@ -139,9 +185,25 @@ fun ControlScreen(vm: AppViewModel) {
             destructive = action == "reboot",
             onConfirm = {
                 pending = null
-                vm.control(action) { note ->
-                    lastNote = note
-                    Toast.makeText(context, note, Toast.LENGTH_LONG).show()
+                when (action) {
+                    "power_save" -> vm.controlWithArgs(
+                        "power_save",
+                        org.json.JSONObject().put("startMinutes", 0).put("durationMinutes", 480).put("enable", true),
+                    ) { note ->
+                        lastNote = note
+                        Toast.makeText(context, note, Toast.LENGTH_LONG).show()
+                    }
+                    "power_save_off" -> vm.controlWithArgs(
+                        "power_save",
+                        org.json.JSONObject().put("enable", false),
+                    ) { note ->
+                        lastNote = note
+                        Toast.makeText(context, note, Toast.LENGTH_LONG).show()
+                    }
+                    else -> vm.control(action) { note ->
+                        lastNote = note
+                        Toast.makeText(context, note, Toast.LENGTH_LONG).show()
+                    }
                 }
             },
             onDismiss = { pending = null },

@@ -11,8 +11,12 @@ import com.starlink.diagnostic.diagnostics.NetProbe
 import com.starlink.diagnostic.diagnostics.NetVerdict
 import com.starlink.diagnostic.diagnostics.NewSample
 import com.starlink.diagnostic.diagnostics.NetworkProber
+import com.starlink.diagnostic.diagnostics.ObstructionMapData
+import com.starlink.diagnostic.diagnostics.DishPingTarget
 import com.starlink.diagnostic.diagnostics.PollResult
+import com.starlink.diagnostic.diagnostics.RouterInfo
 import com.starlink.diagnostic.diagnostics.SeriesPoint
+import com.starlink.diagnostic.diagnostics.SpeedtestState
 import com.starlink.diagnostic.diagnostics.StatusData
 import com.starlink.diagnostic.diagnostics.TestRecord
 import com.starlink.diagnostic.diagnostics.optStringOrNull
@@ -87,6 +91,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _net = MutableStateFlow(NetUi())
     val net: StateFlow<NetUi> = _net
+
+    // ── obstruction map (v42 RPC 2008) ──────────────────────────────
+    data class MapUi(
+        val loading: Boolean = false,
+        val map: ObstructionMapData? = null,
+        val errorAr: String? = null,
+    )
+
+    private val _map = MutableStateFlow(MapUi())
+    val map: StateFlow<MapUi> = _map
+
+    // ── dish-side speedtest (v42 RPC 1027/1028) ─────────────────────
+    data class SpeedUi(
+        val phase: String = "idle", // idle | running | done | error
+        val result: SpeedtestState? = null,
+        val errorAr: String? = null,
+        val noteAr: String? = null,
+    )
+
+    private val _speed = MutableStateFlow(SpeedUi())
+    val speed: StateFlow<SpeedUi> = _speed
+    private var speedJob: Job? = null
+
+    // ── router probe (v42 wifi_get_status=3004) ─────────────────────
+    data class RouterUi(
+        val loading: Boolean = false,
+        val info: RouterInfo? = null,
+    )
+
+    private val _router = MutableStateFlow(RouterUi())
+    val router: StateFlow<RouterUi> = _router
+
+    // ── dish ping targets (v42 get_ping=1009) ───────────────────────
+    data class DishPingUi(
+        val loading: Boolean = false,
+        val targets: List<DishPingTarget> = emptyList(),
+        val errorAr: String? = null,
+    )
+
+    private val _dishPing = MutableStateFlow(DishPingUi())
+    val dishPing: StateFlow<DishPingUi> = _dishPing
 
     // ── raw data ─────────────────────────────────────────────────────────
     data class RawUi(
@@ -256,6 +301,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         grpcOk = grpcOk,
                         popLatencyMs = _conn.value.status?.latencyMs,
                         errorAr = raw.tcpErrorAr,
+                        targets = raw.targets,
                     )
                 }
                 val args = JSONObject().put("net", probe?.toJson() ?: JSONObject.NULL)
@@ -306,6 +352,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     grpcOk = grpcOk,
                     popLatencyMs = _conn.value.status?.latencyMs,
                     errorAr = raw.tcpErrorAr,
+                    targets = raw.targets,
                 )
                 val verdict = try {
                     NetVerdict.parse(
@@ -399,11 +446,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ── dish control ─────────────────────────────────────────────────────
     fun control(action: String, onResult: (String) -> Unit) {
+        controlWithArgs(action, JSONObject(), onResult)
+    }
+
+    fun controlWithArgs(action: String, extraArgs: JSONObject, onResult: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val data = PythonBridge.callSuspend("control", JSONObject().put("action", action))
-                val note = data.optStringOrNull("noteAr")
-                onResult(note ?: "تم إرسال الأمر إلى الطبق بنجاح")
+                val payload = JSONObject().put("action", action)
+                extraArgs.keys().forEach { k -> payload.put(k, extraArgs.get(k)) }
+                val data = PythonBridge.callSuspend("control", payload)
+                onResult(data.optStringOrNull("noteAr") ?: "تم إرسال الأمر إلى الطبق بنجاح")
                 if (action == "reboot") {
                     stopPolling()
                 }
@@ -413,6 +465,121 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult("فشل الأمر: ${e.errorAr}")
             } catch (e: Exception) {
                 onResult("فشل الأمر: ${e.message}")
+            }
+        }
+    }
+
+    // ── v42 additions: obstruction map / speedtest / router ───────────
+    fun loadObstructionMap() {
+        viewModelScope.launch {
+            _map.value = _map.value.copy(loading = true, errorAr = null)
+            try {
+                val data = PythonBridge.callSuspend("obstruction_map")
+                val parsed = ObstructionMapData.parse(data)
+                _map.value = _map.value.copy(
+                    loading = false,
+                    map = parsed,
+                    errorAr = data.optStringOrNull("errorAr"),
+                )
+            } catch (e: PythonBridge.BridgeException) {
+                _map.value = _map.value.copy(loading = false, errorAr = e.errorAr)
+            } catch (e: Exception) {
+                _map.value = _map.value.copy(loading = false, errorAr = "${e.message}")
+            }
+        }
+    }
+
+    /** Ask the dish to run its own speed test, then poll until it finishes. */
+    fun startSpeedtest() {
+        speedJob?.cancel()
+        _speed.value = SpeedUi(phase = "running")
+        speedJob = viewModelScope.launch {
+            try {
+                val start = PythonBridge.callSuspend("speedtest_start")
+                start.optStringOrNull("noteAr")?.let {
+                    _speed.value = _speed.value.copy(noteAr = it)
+                }
+                var last: SpeedtestState? = null
+                // The dish needs a few seconds to spin up; poll up to ~75 s.
+                var polled = 0
+                while (polled < 25 && isActive) {
+                    delay(3000)
+                    polled++
+                    val data = PythonBridge.callSuspend("speedtest_status")
+                    val st = SpeedtestState.parse(data)
+                    last = st
+                    if (!st.running && (st.down != null || st.up != null)) break
+                }
+                val finalState = last
+                _speed.value = if (finalState != null && !finalState.running &&
+                    (finalState.down != null || finalState.up != null)
+                ) {
+                    _speed.value.copy(phase = "done", result = finalState)
+                } else {
+                    _speed.value.copy(
+                        phase = "error",
+                        errorAr = "انتهت المهلة دون نتيجة — أعد المحاولة لاحقاً",
+                    )
+                }
+            } catch (e: PythonBridge.BridgeException) {
+                _speed.value = _speed.value.copy(phase = "error", errorAr = e.errorAr)
+            } catch (e: Exception) {
+                _speed.value = _speed.value.copy(phase = "error", errorAr = "${e.message}")
+            }
+        }
+    }
+
+    fun probeRouter() {
+        viewModelScope.launch {
+            _router.value = _router.value.copy(loading = true)
+            try {
+                val data = PythonBridge.callSuspend("router_probe")
+                _router.value = _router.value.copy(loading = false, info = RouterInfo.parse(data))
+            } catch (e: PythonBridge.BridgeException) {
+                _router.value = _router.value.copy(
+                    loading = false,
+                    info = RouterInfo(
+                        reachable = false, tried = true, host = "192.168.1.1", port = 9000,
+                        id = null, hardwareVersion = null, softwareVersion = null,
+                        uptimeS = null, wanIp = null, dishPingLatencyMs = null,
+                        popPingLatencyMs = null, clients = emptyList(),
+                        errorAr = e.errorAr,
+                    ),
+                )
+            } catch (e: Exception) {
+                _router.value = _router.value.copy(loading = false)
+            }
+        }
+    }
+
+    fun loadDishPing() {
+        viewModelScope.launch {
+            _dishPing.value = _dishPing.value.copy(loading = true, errorAr = null)
+            try {
+                val data = PythonBridge.callSuspend("dish_ping")
+                val arr = data.optJSONArray("targets")
+                val list = mutableListOf<DishPingTarget>()
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        list.add(
+                            DishPingTarget(
+                                target = o.optString("target", "target"),
+                                dropRate = o.optDouble("dropRate", 0.0),
+                                latencyMs = o.optDouble("latencyMs", 0.0),
+                            ),
+                        )
+                    }
+                }
+                _dishPing.value = _dishPing.value.copy(
+                    loading = false,
+                    targets = list,
+                    errorAr = data.optStringOrNull("errorAr"),
+                )
+            } catch (e: PythonBridge.BridgeException) {
+                _dishPing.value = _dishPing.value.copy(loading = false, errorAr = e.errorAr)
+            } catch (e: Exception) {
+                _dishPing.value = _dishPing.value.copy(loading = false, errorAr = "${e.message}")
             }
         }
     }

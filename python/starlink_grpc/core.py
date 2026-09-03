@@ -1,19 +1,22 @@
-"""Faithful mini-port of sparky8512/starlink-grpc-tools v1.2.5 (starlink_grpc.py).
+"""Starlink dish gRPC layer for V2.1 — aligned with the CURRENT firmware
+protocol (API v42, verified against joshuasing/starlink_exporter generated
+descriptors, firmware 2026.06.22) while keeping the call signatures and data
+dict keys of sparky8512/starlink-grpc-tools v1.2.5 wherever they still apply.
 
-Only the pieces V2 uses are ported, with identical call signatures and data
-dict keys wherever the original defines them:
-
-    ChannelContext, call_with_channel, GrpcError
-    get_status / get_id / status_data
-    get_history / _compute_sample_range / history_bulk_data / history_ping_stats
-    history_stats
-    reboot / set_stow_state
-
-Upstream uses gRPC reflection (yagrc) to load protocol classes at runtime.
-V2 bundles a protoset-verified spacex_api_device.proto instead (compiled to
-pb2 with grpcio-tools 1.59.3, matching the pinned grpcio 1.59.3 runtime), so
-the wire protocol and request ids are identical without a reflection round
-trip on every cold start. See docs/GRPC.md for the full rationale.
+v42 layout essentials (see docs/spacex_api_device.proto for the full map):
+- History: 1001..1004 arrays unchanged; 1005-1007 GONE; 1009 = repeated
+  DishOutage; 1010 = power_in (W per sample); alert_bitmask gone.
+- Status: state/snr removed -> state is derived from the outage message
+  exactly like current starlink-grpc-tools; gps_stats=1015 (inhibit_gps is
+  a REAL field now), eth_speed=1016, snr flags 1018/1022, outage=1014,
+  software_update_state=1021, disablement_code=1024, alignment_stats=1027,
+  upsu_stats=1043 (power draw), dl/ul_bandwidth_restricted_reason=1044/1045.
+- alerts_hardware (old repeated Alert enum) is GONE in v42 -> V2.1 evidence
+  comes from disablement_code + DishAlerts booleans + outage causes.
+- New RPCs used here: get_ping=1009, start_speedtest=1027,
+  get_speedtest_status=1028, dish_get_obstruction_map=2008,
+  dish_power_save=2013, dish_inhibit_gps=2014, wifi_get_status=3004 and
+  wifi_get_clients=3002 (router shares the same Device.Handle service).
 """
 
 import math
@@ -29,6 +32,7 @@ import spacex_api_device_pb2_grpc as device_grpc
 REQUEST_TIMEOUT = 10
 
 DEFAULT_TARGET = "192.168.100.1:9200"
+DEFAULT_ROUTER_TARGET = "192.168.1.1:9000"
 
 
 class GrpcError(Exception):
@@ -47,11 +51,7 @@ class GrpcError(Exception):
 
 
 class ChannelContext:
-    """A wrapper for reusing an open grpc Channel across calls.
-
-    Mirrors upstream v1.2.5: `close()` should be called on the object when
-    it is no longer in use.
-    """
+    """A wrapper for reusing an open grpc Channel across calls."""
 
     def __init__(self, target: Optional[str] = None) -> None:
         self.channel = None
@@ -77,12 +77,7 @@ class ChannelContext:
 
 
 def call_with_channel(function, *args, context: Optional[ChannelContext] = None, **kwargs):
-    """Call a function with a grpc.Channel object (same retry semantics as upstream).
-
-    If no context is given, a one-shot channel is used and closed afterwards.
-    With a context, a failed reused channel gets exactly one retry on a fresh
-    channel, since connectivity may have been lost and restored since last use.
-    """
+    """Call a function with a grpc.Channel object (same retry semantics as upstream)."""
     if context is None:
         temp = ChannelContext()
         channel, _ = temp.get_channel()
@@ -106,35 +101,61 @@ DeviceStub = device_grpc.DeviceStub
 Request = device.Request
 
 
+def _handle(channel, request, timeout=REQUEST_TIMEOUT):
+    stub = DeviceStub(channel)
+    return stub.Handle(request, timeout=timeout)
+
+
 def get_status(context: Optional[ChannelContext] = None):
     """Fetch status and return it in grpc structure format (upstream signature)."""
 
     def grpc_call(channel):
-        stub = DeviceStub(channel)
-        response = stub.Handle(Request(get_status={}), timeout=REQUEST_TIMEOUT)
-        return response.dish_get_status
+        return _handle(channel, Request(get_status={})).dish_get_status
 
     return call_with_channel(grpc_call, context=context)
 
 
 def get_id(context: Optional[ChannelContext] = None) -> str:
     """Fetch dish ID and return it."""
-
-    def grpc_call(channel):
-        return get_status(context).device_info.id
-
     try:
-        return grpc_call(None if context is None else context.get_channel()[0])
+        return get_status(context).device_info.id
     except (AttributeError, ValueError, grpc.RpcError) as e:
         raise GrpcError(e) from e
+
+
+def _enum_name(enum_type, value, fallback=None):
+    """Enum value name with graceful fallback for unknown codes."""
+    try:
+        return enum_type.Name(value)
+    except (ValueError, AttributeError):
+        return fallback if fallback is not None else str(int(value))
+
+
+def outage_dict(outage):
+    """DishOutage message -> plain dict (V2.1 outage attribution)."""
+    if outage is None:
+        return None
+    try:
+        has = outage.SerializeToString() != b""
+    except Exception:  # noqa: BLE001
+        has = False
+    if not has:
+        return None
+    return {
+        "cause": int(outage.cause),
+        "causeName": _enum_name(device.DishOutage.Cause, outage.cause, "CAUSE_UNKNOWN"),
+        "ongoing": outage.duration_ns == 0,
+        "startTsNs": int(outage.start_timestamp_ns),
+        "durationNs": int(outage.duration_ns),
+        "didSwitch": bool(outage.did_switch),
+    }
 
 
 def _scan_unknown_varint(msg, min_field: int = 3):
     """Scan unknown varint fields of a message (protobuf unknown field set).
 
-    Newer firmware may add fields (e.g. DishGpsStats.inhibit_gps) that our
-    bundled schema does not know. Upstream sees them via reflection; we see
-    them here. Returns a list of (field_number, value) tuples.
+    Kept as a transparency aid for newer firmware; with the v42 schema the
+    fields V2.1 needs are declared, so this is no longer on the critical path.
     """
     out = []
     try:
@@ -151,24 +172,28 @@ def _scan_unknown_varint(msg, min_field: int = 3):
 def status_data(
     context: Optional[ChannelContext] = None,
 ) -> Tuple[dict, dict, dict]:
-    """Fetch current status data (same keys as upstream v1.2.5)."""
+    """Fetch current status data (same keys as upstream v1.2.5, v42 semantics)."""
     try:
         status = get_status(context)
     except (AttributeError, ValueError, grpc.RpcError) as e:
         raise GrpcError(e) from e
 
-    # Upstream derives state from the outage message (read via reflection).
-    # Our bundled schema instead carries the DishState enum field, so derive
-    # from it; if a firmware outage message ever shows up as an unknown
-    # field, we still fall back to the enum.
-    try:
-        state = device.DishState.Name(status.state)
-    except ValueError:
-        state = "UNKNOWN"
+    # State: the v42 service carries no DishState enum, so derive from the
+    # outage message. An outage with duration_ns > 0 is a COMPLETED outage
+    # the dish still attaches to status — the dish is connected again; only
+    # duration_ns == 0 means the outage is ongoing.
+    outage = outage_dict(status.outage) if status.HasField("outage") else None
+    if outage is not None and outage["ongoing"]:
+        if outage["causeName"] == "CAUSE_NO_SCHEDULE":
+            # Special case translate this to equivalent old name (upstream)
+            state = "SEARCHING"
+        else:
+            state = outage["causeName"].replace("CAUSE_", "")
+    else:
+        state = "CONNECTED"
 
-    # More alerts may be added in future, so in addition to listing them
-    # individually, provide a bit field based on field numbers of the
-    # DishAlerts message. (Same as upstream.)
+    # Alerts: bit field based on field numbers of the DishAlerts message
+    # (same approach as upstream) + the expanded v42 boolean set.
     alerts = {}
     alert_bits = 0
     try:
@@ -180,85 +205,140 @@ def status_data(
     except AttributeError:
         pass
 
-    # Hardware alert codes (repeated Alert enum). Extended enum values from
-    # newer firmware decode fine as ints, which is exactly what the
-    # diagnostics engine wants (e.g. code 14 observed for GPS self-test).
-    try:
-        alert_hw = [int(v) for v in status.alerts_hardware]
-    except AttributeError:
-        alert_hw = []
-
-    obstruction_duration = None
-    obstruction_interval = None
     obstruction_stats = getattr(status, "obstruction_stats", None)
-    if obstruction_stats is not None:
-        try:
-            if (
-                obstruction_stats.avg_prolonged_obstruction_duration_s > 0.0
-                and not math.isnan(obstruction_stats.avg_prolonged_obstruction_interval_s)
-            ):
-                obstruction_duration = obstruction_stats.avg_prolonged_obstruction_duration_s
-                obstruction_interval = obstruction_stats.avg_prolonged_obstruction_interval_s
-        except AttributeError:
-            pass
-
     device_info = getattr(status, "device_info", None)
     gps_stats = getattr(status, "gps_stats", None)
-    inhibit_gps = getattr(gps_stats, "inhibit_gps", None)
-    inhibit_raw = None
-    if inhibit_gps is None and gps_stats is not None:
-        # Firmware newer than our bundled schema may send inhibit_gps as an
-        # unknown varint field. First unknown 0/1 varint >= field 3 is the
-        # best candidate; reported transparently to the UI.
-        for fnum, val in _scan_unknown_varint(gps_stats, min_field=3):
-            if val in (0, 1):
-                inhibit_raw = {"field": fnum, "value": bool(val)}
-                inhibit_gps = bool(val)
-                break
+    alignment = getattr(status, "alignment_stats", None)
+    swu_stats = getattr(status, "software_update_stats", None)
+    upsu = getattr(status, "upsu_stats", None)
+    battery = getattr(status, "battery_stats", None)
 
-    eth_speed = getattr(status, "eth_speed_mbps", None)
+    def _f(msg, key):
+        v = getattr(msg, key, None) if msg is not None else None
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+
+    # Power draw (Gen2/3 UPSU). None when the dish does not publish it.
+    dish_power = _f(upsu, "dish_power")
+    router_power = _f(upsu, "router_power")
+
+    alignment_d = None
+    if alignment is not None and alignment.SerializeToString() != b"":
+        alignment_d = {
+            "hasActuators": _enum_name(device.HasActuators, alignment.has_actuators),
+            "actuatorState": _enum_name(device.ActuatorState, alignment.actuator_state),
+            "tiltAngleDeg": _f(alignment, "tilt_angle_deg"),
+            "boresightAzimuthDeg": _f(alignment, "boresight_azimuth_deg"),
+            "boresightElevationDeg": _f(alignment, "boresight_elevation_deg"),
+            "attitudeState": _enum_name(
+                device.AttitudeEstimationState, alignment.attitude_estimation_state
+            ),
+            "attitudeUncertaintyDeg": _f(alignment, "attitude_uncertainty_deg"),
+            "desiredBoresightAzimuthDeg": _f(alignment, "desired_boresight_azimuth_deg"),
+            "desiredBoresightElevationDeg": _f(alignment, "desired_boresight_elevation_deg"),
+        }
+
+    swu_d = None
+    if swu_stats is not None and swu_stats.SerializeToString() != b"":
+        swu_d = {
+            "state": int(swu_stats.software_update_state),
+            "stateName": _enum_name(
+                device.SoftwareUpdateState, swu_stats.software_update_state
+            ),
+            "progress": _f(swu_stats, "software_update_progress"),
+            "requiresReboot": bool(swu_stats.update_requires_reboot),
+            "rebootScheduledUtc": int(swu_stats.reboot_scheduled_utc_time),
+        }
+
+    swu_state = int(getattr(status, "software_update_state", 0))
+    disablement = int(getattr(status, "disablement_code", 0))
+    dl_restricted = int(getattr(status, "dl_bandwidth_restricted_reason", 0))
+    ul_restricted = int(getattr(status, "ul_bandwidth_restricted_reason", 0))
 
     return {
         "id": getattr(device_info, "id", None),
         "hardware_version": getattr(device_info, "hardware_version", None),
         "software_version": getattr(device_info, "software_version", None),
+        "country_code": getattr(device_info, "country_code", None),
+        "bootcount": getattr(device_info, "bootcount", None),
+        "build_id": getattr(device_info, "build_id", None),
         "state": state,
         "uptime": getattr(getattr(status, "device_state", None), "uptime_s", None),
-        "snr": None,  # obsoleted in grpc service (upstream keeps the key)
-        "seconds_to_first_nonempty_slot": getattr(status, "seconds_to_first_nonempty_slot", None),
-        "pop_ping_drop_rate": getattr(status, "pop_ping_drop_rate", None),
-        "downlink_throughput_bps": getattr(status, "downlink_throughput_bps", None),
-        "uplink_throughput_bps": getattr(status, "uplink_throughput_bps", None),
-        "pop_ping_latency_ms": getattr(status, "pop_ping_latency_ms", None),
+        "snr": None,  # obsoleted in the v42 service (upstream keeps the key)
+        "seconds_to_first_nonempty_slot": _f(status, "seconds_to_first_nonempty_slot"),
+        "pop_ping_drop_rate": _f(status, "pop_ping_drop_rate"),
+        "downlink_throughput_bps": _f(status, "downlink_throughput_bps"),
+        "uplink_throughput_bps": _f(status, "uplink_throughput_bps"),
+        "pop_ping_latency_ms": _f(status, "pop_ping_latency_ms"),
         "alerts": alert_bits,
-        "alert_hw_codes": alert_hw,  # V2 extension: repeated Alert enum values
-        "fraction_obstructed": getattr(obstruction_stats, "fraction_obstructed", None),
+        "alert_hw_codes": [],  # alerts_hardware removed in v42 (kept for key compat)
+        "fraction_obstructed": _f(obstruction_stats, "fraction_obstructed"),
         "currently_obstructed": getattr(obstruction_stats, "currently_obstructed", None),
-        "seconds_obstructed": None,  # obsoleted in grpc service
-        "obstruction_duration": obstruction_duration,
-        "obstruction_interval": obstruction_interval,
-        "direction_azimuth": getattr(status, "boresight_azimuth_deg", None),
-        "direction_elevation": getattr(status, "boresight_elevation_deg", None),
+        "seconds_obstructed": None,  # obsoleted
+        "obstruction_duration": _f(obstruction_stats, "avg_prolonged_obstruction_duration_s"),
+        "obstruction_interval": _f(obstruction_stats, "avg_prolonged_obstruction_interval_s"),
+        "direction_azimuth": _f(status, "boresight_azimuth_deg"),
+        "direction_elevation": _f(status, "boresight_elevation_deg"),
         "is_snr_above_noise_floor": getattr(status, "is_snr_above_noise_floor", None),
         "is_snr_persistently_low": getattr(status, "is_snr_persistently_low", None),
-        "eth_speed_mbps": eth_speed,
+        "eth_speed_mbps": getattr(status, "eth_speed_mbps", None),
         "stow_requested": getattr(status, "stow_requested", None),
+        # v42 evidence surface (V2.1):
+        "outage": outage,
+        "disablement_code": disablement,
+        "software_update_state": swu_state,
+        "swupdate_reboot_ready": getattr(status, "swupdate_reboot_ready", None),
+        "software_update_stats": swu_d,
+        "dl_restricted_reason": dl_restricted,
+        "ul_restricted_reason": ul_restricted,
+        "mobility_class": _enum_name(
+            device.UserMobilityClass, getattr(status, "mobility_class", 0)
+        ),
+        "class_of_service": _enum_name(
+            device.UserClassOfService, getattr(status, "class_of_service", 0)
+        ),
+        "ready_states": {
+            k: bool(getattr(getattr(status, "ready_states", None), k, False))
+            for k in ("cady", "scp", "l1l2", "xphy", "aap", "rf")
+        },
+        "alignment": alignment_d,
+        "dish_power_w": dish_power,
+        "router_power_w": router_power,
+        "upsu_uptime_s": getattr(upsu, "uptime", None) if upsu is not None else None,
+        "battery": {
+            "stateOfCharge": getattr(battery, "state_of_charge", None),
+            "isCharging": getattr(battery, "is_charging", None),
+        } if battery is not None and battery.SerializeToString() != b"" else None,
+        "reboot_reason": _enum_name(
+            device.RebootReason, getattr(status, "reboot_reason", 0)
+        ),
         "gps_ready": getattr(gps_stats, "gps_valid", None),
-        "gps_enabled": None if inhibit_gps is None else not inhibit_gps,
         "gps_sats": getattr(gps_stats, "gps_sats", None),
-        "gps_inhibit_raw": inhibit_raw,  # V2 extension: unknown-field evidence
+        "gps_no_sats_after_ttff": getattr(gps_stats, "no_sats_after_ttff", None),
+        "gps_enabled": (
+            None if gps_stats is None or not gps_stats.HasField("inhibit_gps")
+            else not bool(gps_stats.inhibit_gps)
+        ),
     }, {
-        "valid_s": getattr(obstruction_stats, "valid_s", None),
-        "last_24h_obstructed_s": getattr(obstruction_stats, "last_24h_obstructed_s", None),
-        "last_24h_valid_s": getattr(obstruction_stats, "last_24h_valid_s", None),
-        "avg_prolonged_obstruction_duration_s": getattr(
-            obstruction_stats, "avg_prolonged_obstruction_duration_s", None
+        # v42 carries no 24h counters / wedges / direction — keys stay for
+        # compatibility and read as None on modern dishes.
+        "valid_s": _f(obstruction_stats, "valid_s"),
+        "last_24h_obstructed_s": None,
+        "last_24h_valid_s": None,
+        "avg_prolonged_obstruction_duration_s": _f(
+            obstruction_stats, "avg_prolonged_obstruction_duration_s"
         ),
-        "avg_prolonged_obstruction_interval_s": getattr(
-            obstruction_stats, "avg_prolonged_obstruction_interval_s", None
+        "avg_prolonged_obstruction_interval_s": _f(
+            obstruction_stats, "avg_prolonged_obstruction_interval_s"
         ),
-        "direction_azimuth": getattr(obstruction_stats, "direction_azimuth", None),
-        "direction_elevation": getattr(obstruction_stats, "direction_elevation", None),
+        "avg_prolonged_obstruction_valid": getattr(
+            obstruction_stats, "avg_prolonged_obstruction_valid", None
+        ),
+        "time_obstructed": _f(obstruction_stats, "time_obstructed"),
+        "patches_valid": getattr(obstruction_stats, "patches_valid", None),
+        "direction_azimuth": None,
+        "direction_elevation": None,
     }, alerts
 
 
@@ -266,9 +346,7 @@ def get_history(context: Optional[ChannelContext] = None):
     """Fetch history data and return it in grpc structure format (upstream signature)."""
 
     def grpc_call(channel):
-        stub = DeviceStub(channel)
-        response = stub.Handle(Request(get_history={}), timeout=REQUEST_TIMEOUT)
-        return response.dish_get_history
+        return _handle(channel, Request(get_history={})).dish_get_history
 
     return call_with_channel(grpc_call, context=context)
 
@@ -324,6 +402,51 @@ def _compute_sample_range(
     return sample_range, current - start, current
 
 
+def outages_from_history(history) -> List[dict]:
+    """Outage records overlapping the history buffer (v42 field 1009)."""
+    out = []
+    try:
+        for o in history.outages:
+            d = outage_dict(o)
+            if d is not None:
+                out.append(d)
+    except (AttributeError, TypeError):
+        pass
+    return out
+
+
+def history_power_stats(
+    parse_samples: int,
+    context: Optional[ChannelContext] = None,
+    history=None,
+) -> dict:
+    """Power statistics from the v42 power_in array (watts per sample)."""
+    if history is None:
+        try:
+            history = get_history(context)
+        except (AttributeError, ValueError, grpc.RpcError) as e:
+            raise GrpcError(e) from e
+
+    sample_range, parsed_samples, current = _compute_sample_range(history, parse_samples)
+    watts = []
+    for i in sample_range:
+        try:
+            w = float(history.power_in[i])
+            if not math.isnan(w) and not math.isinf(w):
+                watts.append(w)
+        except (AttributeError, IndexError, TypeError):
+            pass
+    avg = sum(watts) / len(watts) if watts else None
+    return {
+        "samples": len(watts),
+        "avgPowerW": round(avg, 1) if avg is not None else None,
+        "minPowerW": round(min(watts), 1) if watts else None,
+        "maxPowerW": round(max(watts), 1) if watts else None,
+        # kWh over the parsed window (each sample = 1 s)
+        "kWh": round(sum(watts) / 3600.0 / 1000.0, 4) if watts else None,
+    }
+
+
 def history_bulk_data(
     parse_samples: int,
     start: Optional[int] = None,
@@ -349,6 +472,7 @@ def history_bulk_data(
     scheduled = []
     obstructed = []
 
+    # scheduled/obstructed arrays were removed in v42; tolerate both worlds.
     has_sched = (
         getattr(history, "scheduled", None) is not None
         and len(getattr(history, "scheduled", [])) > 0
@@ -384,9 +508,6 @@ def history_bulk_data(
             pass
         uplink_throughput_bps.append(uplink)
 
-        # Upstream marks scheduled/obstructed as obsoleted and returns Nones.
-        # Our bundled schema still carries both arrays, so populate them when
-        # the dish actually sends them (marked V2 extension).
         val_sched = None
         val_obstruct = None
         if has_sched:
@@ -497,10 +618,6 @@ def history_stats(
             init_run_length = 0
         tot += d
 
-        # Obstructed/unscheduled accounting: upstream v1.2.5 leaves these at
-        # zero because the fields were obsoleted upstream; our bundled schema
-        # still carries them, so count when the dish sends them (V2 extension
-        # matching the pre-obsoletion upstream behavior).
         if has_obstruct:
             try:
                 if history.obstructed[i]:
@@ -636,12 +753,149 @@ def history_stats(
     }
 
 
+def get_obstruction_map(context: Optional[ChannelContext] = None) -> dict:
+    """Fetch the polar obstruction map (RPC dish_get_obstruction_map=2008).
+
+    Returns num_rows x num_cols SNR matrix + geometry. Row 0 is the lowest
+    elevation ring (min_elevation_deg), last row is zenith; columns sweep
+    azimuth 0..360.
+    """
+
+    def grpc_call(channel):
+        resp = _handle(channel, Request(dish_get_obstruction_map={}))
+        m = resp.dish_get_obstruction_map
+        return {
+            "numRows": int(m.num_rows),
+            "numCols": int(m.num_cols),
+            "snr": [float(v) for v in m.snr],
+            "minElevationDeg": float(m.min_elevation_deg),
+            "maxThetaDeg": float(m.max_theta_deg),
+            "referenceFrame": _enum_name(
+                device.ObstructionMapReferenceFrame, m.map_reference_frame
+            ),
+        }
+
+    try:
+        return call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
+def get_ping(context: Optional[ChannelContext] = None) -> dict:
+    """Device-level ping to its configured targets (RPC get_ping=1009)."""
+
+    def grpc_call(channel):
+        resp = _handle(channel, Request(get_ping={}))
+        out = []
+        results = getattr(resp.get_ping, "results", None) or {}
+        for name, res in results.items():
+            out.append({
+                "target": name,
+                "dropRate": float(res.drop_rate),
+                "latencyMs": float(res.latency_ms),
+                "service": res.target.service,
+                "location": res.target.location,
+                "address": res.target.address,
+            })
+        return {"targets": out}
+
+    try:
+        return call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
+def start_speedtest(context: Optional[ChannelContext] = None, duration_s: int = 15) -> dict:
+    """Ask the dish to run its own speed test (RPC start_speedtest=1027)."""
+
+    def grpc_call(channel):
+        _handle(
+            channel,
+            Request(start_speedtest={"duration_s": duration_s, "send_telemetry": False}),
+        )
+        return {"started": True, "durationS": duration_s}
+
+    try:
+        return call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
+def get_speedtest_status(context: Optional[ChannelContext] = None) -> dict:
+    """Speed test status/results (RPC get_speedtest_status=1028)."""
+
+    def grpc_call(channel):
+        resp = _handle(channel, Request(get_speedtest_status={}))
+        st = resp.get_speedtest_status.status
+
+        def direction(d):
+            if d is None or d.SerializeToString() == b"":
+                return None
+            tps = [float(v) for v in d.throughputs_mbps]
+            return {
+                "throughputsMbps": tps,
+                "peakMbps": max(tps) if tps else None,
+                "err": int(d.err),
+            }
+
+        return {
+            "running": bool(st.running),
+            "id": int(st.id),
+            "down": direction(getattr(st, "down", None)),
+            "up": direction(getattr(st, "up", None)),
+        }
+
+    try:
+        return call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
+def set_power_save(
+    start_minutes: int,
+    duration_minutes: int,
+    enable: bool,
+    context: Optional[ChannelContext] = None,
+) -> None:
+    """Configure dish power save / sleep window (RPC dish_power_save=2013)."""
+
+    def grpc_call(channel):
+        _handle(
+            channel,
+            Request(dish_power_save={
+                "power_save_start_minutes": int(start_minutes),
+                "power_save_duration_minutes": int(duration_minutes),
+                "enable_power_save": bool(enable),
+            }),
+        )
+
+    try:
+        call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
+def set_gps_inhibit(inhibit: bool, context: Optional[ChannelContext] = None) -> None:
+    """Inhibit or re-enable the dish GPS (RPC dish_inhibit_gps=2014).
+
+    Re-enabling GPS is exactly the remedy the diagnostics engine prescribes
+    for an inhibited-GPS device that cannot be diagnosed conclusively.
+    """
+
+    def grpc_call(channel):
+        _handle(channel, Request(dish_inhibit_gps={"inhibit_gps": bool(inhibit)}))
+
+    try:
+        call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
 def reboot(context: Optional[ChannelContext] = None) -> None:
     """Request dish reboot operation (upstream signature)."""
 
     def grpc_call(channel: grpc.Channel) -> None:
-        stub = DeviceStub(channel)
-        stub.Handle(Request(reboot={}), timeout=REQUEST_TIMEOUT)
+        _handle(channel, Request(reboot={}))
         # response is empty message in this case, so just ignore it
 
     try:
@@ -654,11 +908,66 @@ def set_stow_state(unstow: bool = False, context: Optional[ChannelContext] = Non
     """Request dish stow or unstow operation (upstream signature)."""
 
     def grpc_call(channel: grpc.Channel) -> None:
-        stub = DeviceStub(channel)
-        stub.Handle(Request(dish_stow={"unstow": unstow}), timeout=REQUEST_TIMEOUT)
-        # response is empty message in this case, so just ignore it
+        _handle(channel, Request(dish_stow={"unstow": unstow}))
 
     try:
         call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
+# ── router (same Device.Handle service, different host) ─────────────────
+
+def router_status(context: Optional[ChannelContext]) -> dict:
+    """Router status + ping stats (RPC wifi_get_status=3004)."""
+
+    def grpc_call(channel):
+        resp = _handle(channel, Request(wifi_get_status={}))
+        w = resp.wifi_get_status
+        return {
+            "id": getattr(w.device_info, "id", None),
+            "hardwareVersion": getattr(w.device_info, "hardware_version", None),
+            "softwareVersion": getattr(w.device_info, "software_version", None),
+            "uptimeS": getattr(getattr(w, "device_state", None), "uptime_s", None),
+            "wanIp": w.ipv4_wan_address,
+            "pingLatencyMs": float(w.ping_latency_ms) if w.HasField("ping_latency_ms") else None,
+            "pingDropRate": float(w.ping_drop_rate) if w.HasField("ping_drop_rate") else None,
+            "dishPingLatencyMs": (
+                float(w.dish_ping_latency_ms) if w.HasField("dish_ping_latency_ms") else None
+            ),
+            "dishPingDropRate": (
+                float(w.dish_ping_drop_rate) if w.HasField("dish_ping_drop_rate") else None
+            ),
+            "popPingLatencyMs": (
+                float(w.pop_ping_latency_ms) if w.HasField("pop_ping_latency_ms") else None
+            ),
+            "popPingDropRate": (
+                float(w.pop_ping_drop_rate) if w.HasField("pop_ping_drop_rate") else None
+            ),
+        }
+
+    try:
+        return call_with_channel(grpc_call, context=context)
+    except (AttributeError, ValueError, grpc.RpcError) as e:
+        raise GrpcError(e) from e
+
+
+def router_clients(context: Optional[ChannelContext]) -> list:
+    """Connected router clients (RPC wifi_get_clients=3002)."""
+
+    def grpc_call(channel):
+        resp = _handle(channel, Request(wifi_get_clients={}))
+        out = []
+        for c in resp.wifi_get_clients.clients:
+            out.append({
+                "name": c.given_name or c.name,
+                "mac": c.mac_address,
+                "ip": c.ip_address,
+                "signalDbm": float(c.signal_strength) if c.signal_strength != 0.0 else None,
+            })
+        return out
+
+    try:
+        return call_with_channel(grpc_call, context=context)
     except (AttributeError, ValueError, grpc.RpcError) as e:
         raise GrpcError(e) from e

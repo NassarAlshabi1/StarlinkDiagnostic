@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -42,6 +43,12 @@ import com.starlink.diagnostic.ui.WarnAmber
 @Composable
 fun NetworkScreen(vm: AppViewModel) {
     val net by vm.net.collectAsState()
+    val router by vm.router.collectAsState()
+    val speed by vm.speed.collectAsState()
+    val dishPing by vm.dishPing.collectAsState()
+
+    // Fetch the dish's own ping targets once when the screen opens.
+    LaunchedEffect(Unit) { vm.loadDishPing() }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF0B1026))) {
         Column(
@@ -165,6 +172,132 @@ fun NetworkScreen(vm: AppViewModel) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MutedText,
                     )
+                }
+            }
+
+            // ── Router gRPC diagnostics (wifi_get_status=3004) ──────────
+            Spacer(Modifier.height(12.dp))
+            GlassCard {
+                Text("راوتر ستارلينك (gRPC)", style = MaterialTheme.typography.titleMedium, color = StrongText)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "استعلام wifi_get_status=3004 على 192.168.1.1:9000 — نفس خدمة الطبق",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedText,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { vm.probeRouter() },
+                    enabled = !router.loading,
+                    colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (router.loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.height(16.dp).width(16.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFF06263B),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("يفحص الراوتر…", color = Color(0xFF06263B), fontWeight = FontWeight.Bold)
+                    } else {
+                        Text("فحص الراوتر الآن", color = Color(0xFF06263B), fontWeight = FontWeight.Bold)
+                    }
+                }
+                router.info?.let { r ->
+                    Spacer(Modifier.height(8.dp))
+                    if (r.reachable) {
+                        netRow("Router ID", r.id ?: "—", true)
+                        netRow("Firmware", r.softwareVersion ?: "—", true)
+                        netRow("WAN IP", r.wanIp ?: "—", true)
+                        r.dishPingLatencyMs?.let { netRow("Ping للطبق", "%.1f ms".format(it), true) }
+                        r.popPingLatencyMs?.let { netRow("Ping للـ POP", "%.1f ms".format(it), true) }
+                        netRow("الأجهزة المتصلة", "${r.clients.size}", true)
+                        r.clients.take(8).forEach { c ->
+                            val label = listOfNotNull(c.name ?: c.mac ?: c.ip, c.ip).joinToString(" — ")
+                            val sig = c.signalDbm?.let { " (%.0f dBm)".format(it) } ?: ""
+                            Text(
+                                "• $label$sig",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MutedText,
+                                modifier = Modifier.padding(vertical = 1.dp),
+                            )
+                        }
+                    } else {
+                        r.errorAr?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = WarnAmber)
+                        }
+                    }
+                }
+            }
+
+            // ── Dish-side speed test (start_speedtest=1027) ──────────────
+            Spacer(Modifier.height(12.dp))
+            GlassCard {
+                Text("اختبار سرعة الطبق", style = MaterialTheme.typography.titleMedium, color = StrongText)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "الطبق نفسه يقيس للـ POP — لا يحتاج إنترنت على الهاتف",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedText,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { vm.startSpeedtest() },
+                    enabled = speed.phase != "running",
+                    colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (speed.phase == "running") {
+                        CircularProgressIndicator(
+                            modifier = Modifier.height(16.dp).width(16.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFF06263B),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("يقيس الآن… (قد يستغرق دقيقة)", color = Color(0xFF06263B), fontWeight = FontWeight.Bold)
+                    } else {
+                        Text("ابدأ اختبار السرعة", color = Color(0xFF06263B), fontWeight = FontWeight.Bold)
+                    }
+                }
+                speed.noteAr?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = WarnAmber)
+                }
+                speed.errorAr?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = BadRed)
+                }
+                speed.result?.let { r ->
+                    Spacer(Modifier.height(8.dp))
+                    r.down?.let { d ->
+                        netRow(
+                            "تنزيل (ذروة)",
+                            "%.1f Mbps".format(d.peakMbps ?: d.throughputsMbps.maxOrNull() ?: 0.0),
+                            true,
+                        )
+                    }
+                    r.up?.let { u ->
+                        netRow(
+                            "رفع (ذروة)",
+                            "%.1f Mbps".format(u.peakMbps ?: u.throughputsMbps.maxOrNull() ?: 0.0),
+                            true,
+                        )
+                    }
+                }
+            }
+
+            // ── Dish ping targets (get_ping=1009) ──────────────────────
+            dishPing.targets.isNotEmpty().let { has ->
+                if (has) {
+                    Spacer(Modifier.height(12.dp))
+                    GlassCard {
+                        Text("أهداف ping من الطبق", style = MaterialTheme.typography.titleMedium, color = StrongText)
+                        Spacer(Modifier.height(6.dp))
+                        dishPing.targets.forEach { t ->
+                            netRow(t.target, "%.1f ms — فقد %.1f%%".format(t.latencyMs, t.dropRate * 100), t.dropRate < 0.05)
+                        }
+                    }
                 }
             }
         }

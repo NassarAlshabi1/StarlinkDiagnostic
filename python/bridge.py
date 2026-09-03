@@ -23,14 +23,25 @@ import demo_sim
 import diagnostics as dx
 import history as db
 from starlink_grpc import (
+    DEFAULT_ROUTER_TARGET,
     ChannelContext,
     GrpcError,
     get_history,
+    get_obstruction_map,
+    get_ping,
+    get_speedtest_status,
     get_status,
     history_bulk_data,
+    history_power_stats,
     history_stats,
+    outages_from_history,
     reboot,
+    router_clients,
+    router_status,
+    set_gps_inhibit,
+    set_power_save,
     set_stow_state,
+    start_speedtest,
     status_data,
 )
 
@@ -98,6 +109,24 @@ def _normalize_status(status, obstruction, alerts):
     gps = dx.assess_gps(status)
     down = status.get("downlink_throughput_bps")
     up = status.get("uplink_throughput_bps")
+    outage = status.get("outage")
+    outage_norm = None
+    if outage:
+        _, cause_ar = dx.outage_cause_label(outage.get("cause", 0))
+        outage_norm = {
+            "cause": outage.get("cause"),
+            "causeAr": cause_ar,
+            "ongoing": outage.get("ongoing", False),
+            "startTs": (outage.get("startTsNs") or 0) / 1e9,
+            "durationS": (outage.get("durationNs") or 0) / 1e9,
+        }
+    disablement = status.get("disablement_code")
+    dis_known = disablement not in (None, 0)
+    _, dis_ar, dis_sev = dx.disablement_label(disablement or 0)
+    swu = status.get("software_update_state")
+    swu_entry = dx.SWU_STATE_AR.get(swu) if swu is not None else None
+    dl_r = status.get("dl_restricted_reason")
+    ul_r = status.get("ul_restricted_reason")
     return {
         "state": status.get("state"),
         "uptimeS": status.get("uptime"),
@@ -105,6 +134,9 @@ def _normalize_status(status, obstruction, alerts):
             "id": status.get("id"),
             "hardwareVersion": status.get("hardware_version"),
             "softwareVersion": status.get("software_version"),
+            "countryCode": status.get("country_code"),
+            "bootcount": status.get("bootcount"),
+            "buildId": status.get("build_id"),
         },
         "downMbps": round(down / 1e6, 2) if down is not None else None,
         "upMbps": round(up / 1e6, 2) if up is not None else None,
@@ -125,13 +157,20 @@ def _normalize_status(status, obstruction, alerts):
             "mastNotNearVertical": alerts.get("alert_mast_not_near_vertical", False),
             "slowEthernetSpeeds": alerts.get("alert_slow_ethernet_speeds", False),
             "obstructed": alerts.get("alert_obstructed", False),
+            "isHeating": alerts.get("alert_is_heating", False),
+            "powerSupplyThermalThrottle": alerts.get("alert_power_supply_thermal_throttle", False),
+            "noEthernetLink": alerts.get("alert_no_ethernet_link", False),
+            "dishWaterDetected": alerts.get("alert_dish_water_detected", False),
+            "lowerSignalThanPredicted": alerts.get("alert_lower_signal_than_predicted", False),
         },
         "obstruction": {
             "currentlyObstructed": status.get("currently_obstructed"),
             "fractionObstructed": round(status.get("fraction_obstructed"), 4)
             if status.get("fraction_obstructed") is not None else None,
-            "last24hObstructedS": round(obstruction.get("last_24h_obstructed_s") or 0),
+            "last24hObstructedS": obstruction.get("last_24h_obstructed_s"),
             "validS": round(obstruction.get("valid_s") or 0),
+            "timeObstructed": obstruction.get("time_obstructed"),
+            "patchesValid": obstruction.get("patches_valid"),
             "avgProlongedObstructionDurationS": obstruction.get(
                 "avg_prolonged_obstruction_duration_s"
             ),
@@ -152,6 +191,29 @@ def _normalize_status(status, obstruction, alerts):
         },
         "boresightAzimuthDeg": status.get("direction_azimuth"),
         "boresightElevationDeg": status.get("direction_elevation"),
+        # ── v42 evidence surface (V2.1) ─────────────────────────────────
+        "outage": outage_norm,
+        "disablementCode": disablement if dis_known else None,
+        "disablementAr": dis_ar if dis_known else None,
+        "disablementSeverity": dis_sev if dis_known else None,
+        "softwareUpdateState": swu,
+        "softwareUpdateStateAr": swu_entry["ar"] if swu_entry else None,
+        "swupdateRebootReady": status.get("swupdate_reboot_ready"),
+        "softwareUpdateStats": status.get("software_update_stats"),
+        "dlRestrictedReason": dl_r,
+        "dlRestrictedAr": (dx.RLR_AR.get(dl_r, {}).get("ar") if dl_r is not None else None),
+        "ulRestrictedReason": ul_r,
+        "ulRestrictedAr": (dx.RLR_AR.get(ul_r, {}).get("ar") if ul_r is not None else None),
+        "mobilityClass": status.get("mobility_class"),
+        "readyStates": status.get("ready_states"),
+        "alignment": status.get("alignment"),
+        "power": {
+            "dishW": status.get("dish_power_w"),
+            "routerW": status.get("router_power_w"),
+            "upsuUptimeS": status.get("upsu_uptime_s"),
+        },
+        "battery": status.get("battery"),
+        "rebootReason": status.get("reboot_reason"),
     }
 
 
@@ -336,13 +398,30 @@ def _op_live_series(args):
 def _op_full_diagnostic(args):
     status, obstruction, alerts, hist = _current_status()
     stats = None
+    outages = None
+    power = None
     if _mode == "real":
         ctx = _get_ctx()
         stats = history_stats(parse_samples=-1, context=ctx, history=hist)
+        try:
+            hist_msg = hist if hist is not None else get_history(context=ctx)
+            outages = outages_from_history(hist_msg)
+        except Exception:  # noqa: BLE001
+            outages = None
+        try:
+            power = history_power_stats(
+                parse_samples=-1, context=ctx,
+                history=hist if hist is not None else get_history(context=ctx),
+            )
+        except Exception:  # noqa: BLE001
+            power = None
     else:
         stats = _demo_stats()
+        outages = demo_sim.demo_outage_records()
+        power = demo_sim.demo_power_stats()
     net = args.get("net")
-    assessment = dx.run(status, obstruction, alerts, stats, net=net)
+    assessment = dx.run(status, obstruction, alerts, stats, net=net,
+                        outages=outages, power=power)
     assessment["ts"] = time.time()
     if _db_ready:
         db.store_test(
@@ -357,6 +436,12 @@ def _op_full_diagnostic(args):
                 for c in assessment["selfTest"]["codes"]
             ],
         )
+        if assessment.get("outages", {}).get("ongoing"):
+            db.store_alerts(
+                assessment["ts"],
+                [{"kind": "outage_ongoing",
+                  "detail": assessment["outages"]["ongoing"]["causeAr"]}],
+            )
         db.set_meta_bulk({
             "firmware": status.get("software_version") or "",
             "hardware": status.get("hardware_version") or "",
@@ -482,9 +567,91 @@ def _op_control(args):
         set_stow_state(unstow=False, context=ctx)
     elif action == "unstow":
         set_stow_state(unstow=True, context=ctx)
+    elif action == "gps_enable":
+        set_gps_inhibit(False, context=ctx)
+    elif action == "gps_inhibit":
+        set_gps_inhibit(True, context=ctx)
+    elif action == "power_save":
+        start_min = int(args.get("startMinutes") or 0)
+        dur_min = int(args.get("durationMinutes") or 0)
+        enable = bool(args.get("enable", True))
+        set_power_save(start_min, dur_min, enable, context=ctx)
     else:
         raise ValueError("unknown control action: %s" % action)
     return {"action": action, "accepted": True}
+
+
+# ── v42 additions: obstruction map / speedtest / router ──────────────────
+def _op_obstruction_map(_args):
+    if _mode == "real":
+        try:
+            data = get_obstruction_map(context=_get_ctx())
+            return {"map": data, "source": "real"}
+        except (grpc.RpcError, GrpcError) as exc:
+            # Some older dishes reject the RPC; degrade gracefully.
+            return {"map": None, "source": "real",
+                    "errorAr": "الطبق لم يستجب لطلب خريطة العرقلة (قد يكون الإصدار قديماً)",
+                    "error": "%s: %s" % (type(exc).__name__, exc)}
+    if _mode == "demo":
+        return {"map": demo_sim.demo_obstruction_map(), "source": "demo"}
+    return {"map": demo_sim.sample_obstruction_map(), "source": "sample"}
+
+
+def _op_speedtest_start(args):
+    if _mode != "real":
+        demo_sim.demo_speedtest_start(int(args.get("durationS") or 15))
+        return {"started": True, "demo": True,
+                "noteAr": "وضع العرض — محاكاة اختبار السرعة قيد التشغيل"}
+    duration = int(args.get("durationS") or 15)
+    start_speedtest(context=_get_ctx(), duration_s=duration)
+    return {"started": True, "durationS": duration}
+
+
+def _op_speedtest_status(_args):
+    if _mode != "real":
+        return demo_sim.demo_speedtest_status()
+    return get_speedtest_status(context=_get_ctx())
+
+
+def _op_router_probe(args):
+    """gRPC diagnostics on the Starlink router itself (192.168.1.1:9000)."""
+    host = args.get("host") or "192.168.1.1"
+    port = int(args.get("port") or 9000)
+    rctx = ChannelContext(target="%s:%d" % (host, port))
+    try:
+        st = router_status(rctx)
+        try:
+            clients = router_clients(rctx)
+        except (grpc.RpcError, GrpcError, Exception):
+            clients = []
+        st["reachable"] = True
+        st["host"] = host
+        st["port"] = port
+        st["clients"] = clients
+        return st
+    except (grpc.RpcError, GrpcError, Exception) as exc:
+        return {
+            "reachable": False,
+            "tried": True,
+            "host": host,
+            "port": port,
+            "errorAr": "لا استجابة gRPC من الراوتر على %s:%d — قد يكون الراوتر غير ستارلينك أو المنفذ محجوباً" % (host, port),
+            "error": "%s: %s" % (type(exc).__name__, exc),
+        }
+    finally:
+        rctx.close()
+
+
+def _op_dish_ping(_args):
+    """Device-level ping targets reported by the dish itself (get_ping=1009)."""
+    if _mode != "real":
+        return {"targets": demo_sim.demo_ping_targets()}
+    try:
+        return get_ping(context=_get_ctx())
+    except (grpc.RpcError, GrpcError) as exc:
+        return {"targets": [],
+                "errorAr": "الطبق لا يدعم فحص أهداف الـ ping (قد يكون الإصدار قديماً)",
+                "error": "%s: %s" % (type(exc).__name__, exc)}
 
 
 def _op_demo_set(args):
@@ -554,6 +721,11 @@ _OPS = {
     "full_diagnostic": _op_full_diagnostic,
     "raw": _op_raw,
     "control": _op_control,
+    "obstruction_map": _op_obstruction_map,
+    "speedtest_start": _op_speedtest_start,
+    "speedtest_status": _op_speedtest_status,
+    "router_probe": _op_router_probe,
+    "dish_ping": _op_dish_ping,
     "demo_set": _op_demo_set,
     "demo_load_sample": _op_demo_load_sample,
     "db_summary": _op_db_summary,

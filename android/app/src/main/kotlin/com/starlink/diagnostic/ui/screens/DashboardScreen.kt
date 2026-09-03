@@ -179,6 +179,58 @@ fun DashboardScreen(vm: AppViewModel, nav: NavHostController) {
             }
             Spacer(Modifier.height(12.dp))
 
+            // ── V42 EVIDENCE card (outage / restriction / update / power) ─
+            val st = conn.status
+            if (st != null) {
+                GlassCard {
+                    Text("حالة الطبق الحية", style = MaterialTheme.typography.titleMedium, color = StrongText)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (st.outage?.ongoing == true) {
+                            StatusPill("انقطاع: ${st.outage.causeAr}", "warn")
+                        } else {
+                            StatusPill("لا انقطاع جارٍ", "ok")
+                        }
+                    }
+                    val restrictions = listOfNotNull(
+                        st.dlRestrictedAr?.takeIf { st.dlRestrictedAr != "بلا تقييد" },
+                        st.ulRestrictedAr?.takeIf { st.ulRestrictedAr != "بلا تقييد" },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    KVRow(
+                        "تقييد النطاق",
+                        if (restrictions.isEmpty()) "بلا تقييد" else restrictions.distinct().joinToString("، "),
+                        valueColor = if (restrictions.isEmpty()) GoodGreen else WarnAmber,
+                    )
+                    KVRow(
+                        "تحديث البرامج",
+                        st.softwareUpdateStateAr ?: "—",
+                        valueColor = when (st.softwareUpdateState) {
+                            null, 1 -> MutedText
+                            8 -> BadRed
+                            else -> WarnAmber
+                        },
+                    )
+                    if (st.disablementCode != null && st.disablementCode != 1) {
+                        KVRow("رمز الإيقاف", st.disablementAr ?: "${st.disablementCode}", valueColor = BadRed)
+                    }
+                    st.power?.dishW?.let {
+                        KVRow("سحب الطبق", "%.0f W".format(it), valueColor = SkySoft)
+                    }
+                    st.alignment?.let { al ->
+                        val deltaAz = if (al.boresightAzimuthDeg != null && al.desiredAzimuthDeg != null) {
+                            kotlin.math.abs(al.boresightAzimuthDeg - al.desiredAzimuthDeg)
+                        } else null
+                        KVRow(
+                            "المحاذاة",
+                            if (deltaAz != null) "انحراف %.1f° عن المطلوب".format(deltaAz) else "غير معروفة",
+                            valueColor = if ((deltaAz ?: 0.0) > 5.0) WarnAmber else GoodGreen,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             // ── NETWORK card ─────────────────────────────────────────────
             GlassCard {
                 Text("NETWORK", style = MaterialTheme.typography.titleMedium, color = StrongText)
