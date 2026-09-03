@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -152,6 +153,36 @@ fun SettingsScreen(vm: AppViewModel) {
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }
+            Spacer(Modifier.height(12.dp))
+
+            // V2.2: bring the first-run onboarding wizard back on demand
+            val ctx = LocalContext.current
+            var showGuide by remember { mutableStateOf(false) }
+            if (showGuide) {
+                com.starlink.diagnostic.ui.components.OnboardingDialog(onDone = { showGuide = false })
+            }
+            GlassCard {
+                Text("دليل البدء", style = MaterialTheme.typography.titleMedium, color = StrongText)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "إعادة عرض معالج الإعداد الأول: الاتصال بشبكة الطبق، جاهزية الطبق، " +
+                        "ثم أول تحديث حالة.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedText,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        ctx.getSharedPreferences(AppViewModel.PREFS, android.content.Context.MODE_PRIVATE)
+                            .edit().putBoolean("onboarded", false).apply()
+                        showGuide = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SkyBlue),
+                ) {
+                    Text("عرض دليل البدء", color = Color(0xFF06263B), fontWeight = FontWeight.Bold)
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
 
             GlassCard {

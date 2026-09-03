@@ -223,6 +223,7 @@ data class Assessment(
     val failed: Boolean,
     val networkVerdictAr: String?,
     val networkHops: List<NetHop>,
+    val netQuality: HistStats?,   // V2.2: precision window stats (PDF)
 ) {
     companion object {
         fun parse(a: JSONObject): Assessment {
@@ -297,6 +298,7 @@ data class Assessment(
                 failed = final.optBoolean("failed", false),
                 networkVerdictAr = net?.optStringOrNull("verdictAr"),
                 networkHops = hops,
+                netQuality = HistStats.parse(a.optJSONObject("netQuality")),
             )
         }
     }
@@ -395,10 +397,62 @@ data class NewSample(
     val packetLoss: Double,
 )
 
+// ── V2.2: precision window stats + data-flow freshness ──────────────────
+data class HistStats(
+    val n: Int,               // full window samples
+    val nLat: Int?,           // latency samples available (connected)
+    val p50Ms: Double?,
+    val p95Ms: Double?,
+    val p99Ms: Double?,
+    val jitterMs: Double?,
+    val lossPct: Double?,
+    val downMbpsAvg: Double?,
+    val upMbpsAvg: Double?,
+    val windowS: Int?,
+) {
+    companion object {
+        fun parse(o: JSONObject?): HistStats? {
+            o ?: return null
+            if (!o.has("p50Ms") && !o.has("lossPct") && o.optInt("n", -1) < 0) return null
+            return HistStats(
+                n = o.optInt("n", 0),
+                nLat = o.optIntOrNull("nLat"),
+                p50Ms = o.optDoubleOrNull("p50Ms"),
+                p95Ms = o.optDoubleOrNull("p95Ms"),
+                p99Ms = o.optDoubleOrNull("p99Ms"),
+                jitterMs = o.optDoubleOrNull("jitterMs"),
+                lossPct = o.optDoubleOrNull("lossPct"),
+                downMbpsAvg = o.optDoubleOrNull("downMbpsAvg"),
+                upMbpsAvg = o.optDoubleOrNull("upMbpsAvg"),
+                windowS = o.optIntOrNull("windowS"),
+            )
+        }
+    }
+}
+
+data class Freshness(
+    val streamStalled: Boolean,
+    val dataAgeS: Long?,
+    val samplesInPoll: Int,
+) {
+    companion object {
+        fun parse(o: JSONObject?): Freshness? {
+            o ?: return null
+            return Freshness(
+                streamStalled = o.optBoolean("streamStalled", false),
+                dataAgeS = if (o.has("dataAgeS") && !o.isNull("dataAgeS")) o.optLong("dataAgeS") else null,
+                samplesInPoll = o.optInt("samplesInPoll", 0),
+            )
+        }
+    }
+}
+
 data class PollResult(
     val status: StatusData,
     val newSamples: List<NewSample>,
     val mode: String,
+    val hist: HistStats?,
+    val freshness: Freshness?,
 ) {
     companion object {
         fun parse(data: JSONObject): PollResult {
@@ -420,6 +474,8 @@ data class PollResult(
                 status = StatusData.parse(data),
                 newSamples = samples,
                 mode = data.optString("mode", "real"),
+                hist = HistStats.parse(data.optJSONObject("hist")),
+                freshness = Freshness.parse(data.optJSONObject("freshness")),
             )
         }
     }
@@ -440,9 +496,64 @@ data class DbSummary(
     val alerts: Long,
 )
 
+// ── V2.2: long-range trends (from StarlinkDiagnostic.db) ────────────────
+data class TrendWindow(
+    val samples: Int,
+    val availabilityPct: Double?,
+    val outages: Int?,
+    val outageSamplesS: Int?,
+    val p50Ms: Double?,
+    val p95Ms: Double?,
+    val downAvgMbps: Double?,
+    val upAvgMbps: Double?,
+    val latencyTrend: String?,   // improving | stable | degrading
+    val downloadTrend: String?,
+    val windowS: Int?,
+) {
+    val empty: Boolean get() = samples == 0
+
+    companion object {
+        fun parse(o: JSONObject): TrendWindow = TrendWindow(
+            samples = o.optInt("samples", 0),
+            availabilityPct = o.optDoubleOrNull("availabilityPct"),
+            outages = o.optIntOrNull("outages"),
+            outageSamplesS = o.optIntOrNull("outageSamplesS"),
+            p50Ms = o.optDoubleOrNull("p50Ms"),
+            p95Ms = o.optDoubleOrNull("p95Ms"),
+            downAvgMbps = o.optDoubleOrNull("downAvgMbps"),
+            upAvgMbps = o.optDoubleOrNull("upAvgMbps"),
+            latencyTrend = o.optStringOrNull("latencyTrend"),
+            downloadTrend = o.optStringOrNull("downloadTrend"),
+            windowS = o.optIntOrNull("windowS"),
+        )
+    }
+}
+
+data class TrendsData(
+    val w6h: TrendWindow,
+    val w24h: TrendWindow,
+    val w7d: TrendWindow,
+    val dbReady: Boolean,
+) {
+    companion object {
+        fun parse(data: JSONObject): TrendsData {
+            val t = data.optJSONObject("trends") ?: JSONObject()
+            return TrendsData(
+                w6h = TrendWindow.parse(t.optJSONObject("6h") ?: JSONObject()),
+                w24h = TrendWindow.parse(t.optJSONObject("24h") ?: JSONObject()),
+                w7d = TrendWindow.parse(t.optJSONObject("7d") ?: JSONObject()),
+                dbReady = data.optBoolean("dbReady", false),
+            )
+        }
+    }
+}
+
 // ── org.json defensive helpers ──────────────────────────────────────────
 fun JSONObject.optStringOrNull(key: String): String? =
     if (has(key) && !isNull(key)) optString(key) else null
+
+fun JSONObject.optIntOrNull(key: String): Int? =
+    if (has(key) && !isNull(key)) optInt(key) else null
 
 fun JSONObject.optDoubleOrNull(key: String): Double? =
     if (has(key) && !isNull(key)) optDouble(key) else null

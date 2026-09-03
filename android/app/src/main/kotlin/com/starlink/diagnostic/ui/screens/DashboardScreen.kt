@@ -80,6 +80,49 @@ fun DashboardScreen(vm: AppViewModel, nav: NavHostController) {
             )
             Spacer(Modifier.height(14.dp))
 
+            // ── V2.2 connection health strip ─────────────────────────────
+            if (conn.mode == "real") {
+                val fails = conn.consecutiveFails
+                val (bg, label, labelColor) = when {
+                    conn.healthy -> Triple(
+                        GoodGreen.copy(alpha = 0.10f),
+                        "متصل بالطبق — جاري التحديث",
+                        GoodGreen,
+                    )
+                    fails >= 2 -> Triple(
+                        BadRed.copy(alpha = 0.12f),
+                        "تعذر الوصول للطبق ($fails محاولات فاشلة) — إعادة محاولة تلقائية",
+                        BadRed,
+                    )
+                    else -> Triple(
+                        WarnAmber.copy(alpha = 0.12f),
+                        "جارٍ التحقق من الاتصال…",
+                        WarnAmber,
+                    )
+                }
+                Surface(color = bg, shape = RoundedCornerShape(10.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                    ) {
+                        Box(
+                            Modifier
+                                .height(8.dp)
+                                .width(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(labelColor),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = labelColor,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+
             if (conn.mode != "real") {
                 Surface(
                     color = WarnAmber.copy(alpha = 0.14f),

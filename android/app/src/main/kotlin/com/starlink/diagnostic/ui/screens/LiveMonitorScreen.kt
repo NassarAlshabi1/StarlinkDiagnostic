@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -30,17 +32,21 @@ import com.starlink.diagnostic.ui.GlassCard
 import com.starlink.diagnostic.ui.GoodGreen
 import com.starlink.diagnostic.ui.KVRow
 import com.starlink.diagnostic.ui.LineChart
+import com.starlink.diagnostic.ui.MetricCard
 import com.starlink.diagnostic.ui.MutedText
 import com.starlink.diagnostic.ui.SkyBlue
 import com.starlink.diagnostic.ui.SkySoft
 import com.starlink.diagnostic.ui.StrongText
 import com.starlink.diagnostic.ui.WarnAmber
 import com.starlink.diagnostic.ui.formatUptimeAr
+import androidx.compose.foundation.layout.Arrangement
 
 @Composable
 fun LiveMonitorScreen(vm: AppViewModel) {
     val live by vm.live.collectAsState()
     val conn by vm.conn.collectAsState()
+    val histStats by vm.histStats.collectAsState()
+    val freshness by vm.freshness.collectAsState()
 
     Box(Modifier.fillMaxSize().background(Color(0xFF0B1026))) {
         Column(
@@ -99,6 +105,71 @@ fun LiveMonitorScreen(vm: AppViewModel) {
                 }
             }
             Spacer(Modifier.height(12.dp))
+
+            // ── V2.2: data-flow freshness + precision quality card ──────
+            freshness?.let { fr ->
+                if (fr.streamStalled) {
+                    Surface(
+                        color = BadRed.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text(
+                            "تنبيه: تدفق بيانات الطبق متوقف منذ ${fr.dataAgeS ?: "؟"} ثانية — " +
+                                "الطبق متصل لكنه لا يبث عينات جديدة. راقب الحالة أو أعد تشغيل الطبق.",
+                            color = BadRed,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                } else {
+                    Text(
+                        "التدفق حي — آخر بيانات قبل ${fr.dataAgeS ?: 0} ثانية",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = GoodGreen,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+            histStats?.let { h ->
+                GlassCard {
+                    Text(
+                        "جودة الاتصال — إحصاءات دقيقة" +
+                            (h.windowS?.let { " (آخر $it عينة)" } ?: ""),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = StrongText,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MetricCard(
+                            "p50 (ms)", h.p50Ms?.let { "%.1f".format(it) } ?: "—",
+                            modifier = Modifier.weight(1f),
+                        )
+                        MetricCard(
+                            "p95 (ms)", h.p95Ms?.let { "%.1f".format(it) } ?: "—",
+                            modifier = Modifier.weight(1f),
+                        )
+                        MetricCard(
+                            "p99 (ms)", h.p99Ms?.let { "%.1f".format(it) } ?: "—",
+                            modifier = Modifier.weight(1f),
+                        )
+                        MetricCard(
+                            "Jitter (ms)", h.jitterMs?.let { "%.1f".format(it) } ?: "—",
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    KVRow(
+                        "فقد الحزم في النافذة",
+                        h.lossPct?.let { "%.2f%%".format(it) } ?: "—",
+                        valueColor = if ((h.lossPct ?: 0.0) > 2.0) BadRed else GoodGreen,
+                    )
+                    KVRow("متوسط التنزيل", h.downMbpsAvg?.let { "%.2f Mbps".format(it) } ?: "—")
+                    KVRow("متوسط الرفع", h.upMbpsAvg?.let { "%.2f Mbps".format(it) } ?: "—")
+                    KVRow("عينات الكمون المتاحة", "${h.nLat}/${h.n}")
+                }
+                Spacer(Modifier.height(12.dp))
+            }
 
             // ── charts ───────────────────────────────────────────────────
             val pts = live.points

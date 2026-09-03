@@ -1,5 +1,6 @@
 package com.starlink.diagnostic.ui
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,10 +20,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -30,6 +35,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.starlink.diagnostic.ui.components.OnboardingDialog
 import com.starlink.diagnostic.ui.screens.ControlScreen
 import com.starlink.diagnostic.ui.screens.DashboardScreen
 import com.starlink.diagnostic.ui.screens.DiagnosticsScreen
@@ -52,6 +58,16 @@ private data class BottomItem(
 @Composable
 fun AppRoot(vm: AppViewModel = viewModel()) {
     val nav = rememberNavController()
+    // V2.2 first-run onboarding (persisted in the shared prefs)
+    val ctx = LocalContext.current
+    val prefs = remember { ctx.getSharedPreferences(AppViewModel.PREFS, Context.MODE_PRIVATE) }
+    var showOnboarding by remember { mutableStateOf(!prefs.getBoolean("onboarded", false)) }
+    if (showOnboarding) {
+        OnboardingDialog(onDone = {
+            prefs.edit().putBoolean("onboarded", true).apply()
+            showOnboarding = false
+        })
+    }
     val items = listOf(
         BottomItem("dashboard", "اللوحة", Icons.Rounded.SatelliteAlt),
         BottomItem("live", "مراقبة", Icons.Rounded.MonitorHeart),

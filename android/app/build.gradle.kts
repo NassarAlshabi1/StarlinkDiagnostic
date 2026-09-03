@@ -21,8 +21,8 @@ android {
         // Modern devices only: Android 8.0 (2017)+ and 64-bit ARM (arm64-v8a).
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "2.1.0"
+        versionCode = 4
+        versionName = "2.2.0"
 
         ndk {
             // 64-bit ARM only — every modern phone (2016+) is arm64-v8a.

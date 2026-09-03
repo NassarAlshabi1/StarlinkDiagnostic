@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.starlink.diagnostic.bridge.PythonBridge
 import com.starlink.diagnostic.diagnostics.Assessment
 import com.starlink.diagnostic.diagnostics.DbSummary
+import com.starlink.diagnostic.diagnostics.HistStats
 import com.starlink.diagnostic.diagnostics.NetProbe
 import com.starlink.diagnostic.diagnostics.NetVerdict
 import com.starlink.diagnostic.diagnostics.NewSample
@@ -19,6 +20,7 @@ import com.starlink.diagnostic.diagnostics.SeriesPoint
 import com.starlink.diagnostic.diagnostics.SpeedtestState
 import com.starlink.diagnostic.diagnostics.StatusData
 import com.starlink.diagnostic.diagnostics.TestRecord
+import com.starlink.diagnostic.diagnostics.TrendsData
 import com.starlink.diagnostic.diagnostics.optStringOrNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -51,7 +53,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val mode: String = "real",
         val host: String = "192.168.100.1",
         val port: Int = 9200,
-    )
+        // V2.2 connection health: consecutive failures drive the poll backoff
+        val consecutiveFails: Int = 0,
+        val lastOkAt: Long? = null,
+    ) {
+        val healthy: Boolean get() = status != null && errorAr == null
+    }
 
     private val _conn = MutableStateFlow(ConnUi())
     val conn: StateFlow<ConnUi> = _conn
@@ -157,6 +164,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _history = MutableStateFlow(HistoryUi())
     val history: StateFlow<HistoryUi> = _history
 
+    // ── V2.2 long-range trends ──────────────────────────────────────────
+    data class TrendsUi(
+        val loading: Boolean = false,
+        val trends: TrendsData? = null,
+        val errorAr: String? = null,
+    )
+
+    private val _trends = MutableStateFlow(TrendsUi())
+    val trends: StateFlow<TrendsUi> = _trends
+
+    // ── V2.2 CSV export ────────────────────────────────────────────────
+    data class CsvUi(
+        val exporting: Boolean = false,
+        val lastFileAr: String? = null,
+        val errorAr: String? = null,
+    )
+
+    private val _csv = MutableStateFlow(CsvUi())
+    val csv: StateFlow<CsvUi> = _csv
+
+    // ── V2.2 live precision stats ─────────────────────────────────────
+    private val _histStats = MutableStateFlow<HistStats?>(null)
+    val histStats: StateFlow<HistStats?> = _histStats
+
+    private val _freshness = MutableStateFlow<com.starlink.diagnostic.diagnostics.Freshness?>(null)
+    val freshness: StateFlow<com.starlink.diagnostic.diagnostics.Freshness?> = _freshness
+
     val demoMode: Boolean get() = _conn.value.mode != "real"
 
     init {
@@ -225,11 +259,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     status = StatusData.parse(data),
                     errorAr = null,
                     mode = data.optString("mode", "real"),
+                    consecutiveFails = 0,
+                    lastOkAt = System.currentTimeMillis(),
                 )
             } catch (e: PythonBridge.BridgeException) {
-                _conn.value = _conn.value.copy(loading = false, errorAr = e.errorAr)
+                _conn.value = _conn.value.copy(
+                    loading = false,
+                    errorAr = e.errorAr,
+                    consecutiveFails = _conn.value.consecutiveFails + 1,
+                )
             } catch (e: Exception) {
-                _conn.value = _conn.value.copy(loading = false, errorAr = "${e.message}")
+                _conn.value = _conn.value.copy(
+                    loading = false,
+                    errorAr = "${e.message}",
+                    consecutiveFails = _conn.value.consecutiveFails + 1,
+                )
             }
         }
     }
@@ -252,19 +296,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val pr = PollResult.parse(data)
                     _conn.value = _conn.value.copy(
                         status = pr.status, errorAr = null, mode = pr.mode, loading = false,
+                        consecutiveFails = 0, lastOkAt = System.currentTimeMillis(),
                     )
                     val merged = (_live.value.points + pr.newSamples).takeLast(maxLivePoints)
                     _live.value = _live.value.copy(
                         points = merged,
                         pollCount = _live.value.pollCount + 1,
+                        errorAr = null,
                     )
+                    _histStats.value = pr.hist
+                    _freshness.value = pr.freshness
                 } catch (e: PythonBridge.BridgeException) {
+                    val fails = _conn.value.consecutiveFails + 1
                     _live.value = _live.value.copy(errorAr = e.errorAr)
-                    _conn.value = _conn.value.copy(errorAr = e.errorAr)
+                    _conn.value = _conn.value.copy(errorAr = e.errorAr, consecutiveFails = fails)
                 } catch (e: Exception) {
+                    val fails = _conn.value.consecutiveFails + 1
                     _live.value = _live.value.copy(errorAr = "${e.message}")
+                    _conn.value = _conn.value.copy(errorAr = "${e.message}", consecutiveFails = fails)
                 }
-                delay(_live.value.intervalSec * 1000L)
+                // V2.2 backoff: on repeated failures stretch the interval
+                // x2/x4/x8 (max 120 s) instead of hammering a dead link.
+                val fails = _conn.value.consecutiveFails
+                val backoff = if (fails > 0) 1L shl minOf(fails - 1, 3) else 1L
+                val effSec = minOf(intervalSec * backoff, 120L)
+                delay(effSec * 1000L)
             }
         }
     }
@@ -440,6 +496,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _history.value = _history.value.copy(loading = false, errorAr = e.errorAr)
             } catch (e: Exception) {
                 _history.value = _history.value.copy(loading = false, errorAr = "${e.message}")
+            }
+        }
+    }
+
+    // ── V2.2: long-range trends ──────────────────────────────────────────
+    fun loadTrends() {
+        viewModelScope.launch {
+            _trends.value = _trends.value.copy(loading = true, errorAr = null)
+            try {
+                val data = PythonBridge.callSuspend("trends")
+                _trends.value = _trends.value.copy(
+                    loading = false,
+                    trends = TrendsData.parse(data),
+                )
+            } catch (e: PythonBridge.BridgeException) {
+                _trends.value = _trends.value.copy(loading = false, errorAr = e.errorAr)
+            } catch (e: Exception) {
+                _trends.value = _trends.value.copy(loading = false, errorAr = "${e.message}")
+            }
+        }
+    }
+
+    /**
+     * V2.2: export stored history as CSV (Python writes it into the
+     * app-private exports dir), then hand it to the system share sheet.
+     */
+    fun exportCsv(hours: Int) {
+        viewModelScope.launch {
+            _csv.value = _csv.value.copy(exporting = true, errorAr = null, lastFileAr = null)
+            try {
+                val dir = File(getApplication<Application>().filesDir, "exports")
+                dir.mkdirs()
+                val out = File(dir, "starlink_history_%d.csv".format(System.currentTimeMillis()))
+                val data = PythonBridge.callSuspend(
+                    "export_csv",
+                    JSONObject().put("hours", hours).put("path", out.absolutePath),
+                )
+                val rows = data.optInt("rows", 0)
+                _csv.value = _csv.value.copy(
+                    exporting = false,
+                    lastFileAr = "تم تصدير $rows عينة إلى ${out.name}",
+                )
+                if (rows > 0) {
+                    com.starlink.diagnostic.export.CsvExporter.share(getApplication(), out)
+                }
+            } catch (e: PythonBridge.BridgeException) {
+                _csv.value = _csv.value.copy(exporting = false, errorAr = e.errorAr)
+            } catch (e: Exception) {
+                _csv.value = _csv.value.copy(exporting = false, errorAr = "${e.message}")
             }
         }
     }

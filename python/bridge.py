@@ -55,6 +55,12 @@ _last_counter = -1     # history sample counter bookkeeping (real mode)
 _last_sample_t = 0     # demo mode bookkeeping
 _db_ready = False
 
+# V2.2 precision tracking: data-flow freshness (stall detection) and the
+# window size (in samples, 1 Hz) behind the p50/p95/p99 latency stats.
+STATS_WINDOW = 300
+STALL_THRESHOLD_S = 15
+_fresh = {"lastDataTs": 0, "stallSince": None}
+
 _ERR_AR = {
     grpc.StatusCode.UNAVAILABLE: "لا يمكن الوصول إلى الطبق — تأكد من اتصال الهاتف بشبكة ستارلينك ومن صحة العنوان",
     grpc.StatusCode.DEADLINE_EXCEEDED: "انتهت مهلة الاستجابة من الطبق — تحقق من قوة اتصال الشبكة",
@@ -95,6 +101,63 @@ def _err_payload(exc):
 
 
 # ── status normalization (one path for real / demo / sample) ────────────
+def _pct(sorted_vals, p):
+    """Percentile p (0..100) over an already-sorted list, linear interpolation."""
+    if not sorted_vals:
+        return None
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    k = (len(sorted_vals) - 1) * (p / 100.0)
+    f = int(math.floor(k))
+    c = min(f + 1, len(sorted_vals) - 1)
+    if f == c:
+        return sorted_vals[f]
+    return sorted_vals[f] + (sorted_vals[c] - sorted_vals[f]) * (k - f)
+
+
+def _stats_from_arrays(bulk):
+    """Precision network stats over an aligned sample window.
+
+    Latency percentiles use CONNECTED samples only (drop < 0.9): during a
+    full outage the dish reports stale/zero pop-ping latency, which would
+    poison p95/p99 and make a healthy dish look degraded.
+    """
+    lat_all = [v for v in (bulk.get("pop_ping_latency_ms") or []) if v is not None]
+    loss = [v if v is not None else 0.0 for v in (bulk.get("pop_ping_drop_rate") or [])]
+    down = [v if v is not None else 0.0 for v in (bulk.get("downlink_throughput_bps") or [])]
+    up = [v if v is not None else 0.0 for v in (bulk.get("uplink_throughput_bps") or [])]
+    # history_bulk_data already nulls latency while drop >= 1 (upstream
+    # behaviour) — lat_all is therefore the connected-only series.
+    lat_conn = sorted(lat_all)
+    jitter = None
+    if len(lat_conn) >= 2:
+        diffs = [abs(lat_conn[i] - lat_conn[i - 1]) for i in range(1, len(lat_conn))]
+        jitter = round(sum(diffs) / len(diffs), 1)
+    return {
+        "n": len(loss),          # full window size (samples)
+        "nLat": len(lat_all),    # latency samples available (connected)
+        "p50Ms": round(_pct(lat_conn, 50), 1) if lat_conn else None,
+        "p95Ms": round(_pct(lat_conn, 95), 1) if lat_conn else None,
+        "p99Ms": round(_pct(lat_conn, 99), 1) if lat_conn else None,
+        "jitterMs": jitter,
+        "lossPct": round(100.0 * sum(loss) / len(loss), 2) if loss else None,
+        "downMbpsAvg": round(sum(down) / len(down) / 1e6, 2) if down else None,
+        "upMbpsAvg": round(sum(up) / len(up) / 1e6, 2) if up else None,
+    }
+
+
+def _freshness(now, samples_in_poll):
+    """Data-flow quality snapshot for the UI (stale/frozen early warning)."""
+    stalled = False
+    if _fresh["stallSince"] is not None:
+        stalled = (now - _fresh["stallSince"]) >= STALL_THRESHOLD_S
+    return {
+        "streamStalled": stalled,
+        "dataAgeS": max(0, now - _fresh["lastDataTs"]) if _fresh["lastDataTs"] else None,
+        "samplesInPoll": samples_in_poll,
+    }
+
+
 def _gps_label(gps):
     v = gps.get("verdict")
     return {
@@ -315,6 +378,7 @@ def _op_get_status(_args):
 def _poll_real(args):
     global _last_counter
     ctx = _get_ctx()
+    now = int(time.time())
     status, obstruction, alerts, _ = _current_status_real()
     hist = get_history(context=ctx)
     start = _last_counter if _last_counter >= 0 else None
@@ -323,7 +387,7 @@ def _poll_real(args):
     end_counter = gen.get("end_counter") or 0
     new_samples = []
     if n > 0:
-        end_time = int(time.time())
+        end_time = now
         for i in range(n):
             new_samples.append({
                 "ts": end_time - (n - 1 - i),
@@ -336,8 +400,30 @@ def _poll_real(args):
                 "state": status.get("state"),
                 "gps": _gps_label(dx.assess_gps(status)),
             })
+    # ── freshness: is the dish actually STREAMING history samples? ────
+    # end_counter advances ~1 sample/sec over gRPC. If our link is up but
+    # the counter freezes, the stream stalled (half-dead TCP, dish hang)
+    # — an early warning BEFORE the connection fully dies.
+    counter_advanced = bool(end_counter and _last_counter >= 0 and end_counter != _last_counter)
+    if _last_counter >= 0 and not counter_advanced:
+        if _fresh["stallSince"] is None:
+            _fresh["stallSince"] = now
+    else:
+        _fresh["stallSince"] = None
+    if n > 0:
+        _fresh["lastDataTs"] = now
     if end_counter and end_counter != _last_counter:
         _last_counter = end_counter
+    # ── precision stats over the last STATS_WINDOW samples (no extra RPC) ─
+    hist_stats = None
+    try:
+        _, win = history_bulk_data(
+            parse_samples=STATS_WINDOW, context=ctx, history=hist,
+        )
+        hist_stats = _stats_from_arrays(win)
+        hist_stats["windowS"] = STATS_WINDOW
+    except Exception:  # noqa: BLE001 - stats must never break polling
+        hist_stats = None
     stored = db.store_samples(new_samples) if _db_ready else 0
     if _db_ready:
         db.set_meta_bulk({
@@ -348,11 +434,13 @@ def _poll_real(args):
         })
     norm = _normalize_status(status, obstruction, alerts)
     return {"status": _clean(norm), "newSamples": new_samples, "stored": stored,
-            "endCounter": end_counter, "mode": _mode}
+            "endCounter": end_counter, "mode": _mode,
+            "hist": hist_stats, "freshness": _freshness(now, n)}
 
 
 def _poll_demo(_args):
     global _last_sample_t
+    now = int(time.time())
     status, obstruction, alerts, _ = _current_status()
     norm = _normalize_status(status, obstruction, alerts)
     new_samples = []
@@ -370,6 +458,7 @@ def _poll_demo(_args):
                 "state": status.get("state"),
                 "gps": _gps_label(dx.assess_gps(status)),
             })
+            _fresh["lastDataTs"] = now
     stored = db.store_samples(new_samples) if _db_ready else 0
     if _db_ready and new_samples:
         db.set_meta_bulk({
@@ -378,8 +467,19 @@ def _poll_demo(_args):
             "dish_id": status.get("id") or "",
             "last_uptime_s": status.get("uptime") or 0,
         })
+    win_samples = demo_sim.demo_history_window(STATS_WINDOW) if _mode == "demo" else []
+    hist_stats = None
+    if win_samples:
+        hist_stats = _stats_from_arrays({
+            "pop_ping_latency_ms": [s["latencyMs"] for s in win_samples],
+            "pop_ping_drop_rate": [s["dropRate"] for s in win_samples],
+            "downlink_throughput_bps": [s["downMbps"] * 1e6 for s in win_samples],
+            "uplink_throughput_bps": [s["upMbps"] * 1e6 for s in win_samples],
+        })
+        hist_stats["windowS"] = STATS_WINDOW
     return {"status": _clean(norm), "newSamples": new_samples, "stored": stored,
-            "endCounter": 0, "mode": _mode}
+            "endCounter": 0, "mode": _mode,
+            "hist": hist_stats, "freshness": _freshness(now, len(new_samples))}
 
 
 def _op_poll(args):
@@ -423,6 +523,24 @@ def _op_full_diagnostic(args):
     assessment = dx.run(status, obstruction, alerts, stats, net=net,
                         outages=outages, power=power)
     assessment["ts"] = time.time()
+    # V2.2: precision network stats inside the assessment (feeds the PDF report)
+    try:
+        if _mode == "real":
+            ctx = _get_ctx()
+            h = hist if hist is not None else get_history(context=ctx)
+            _, win = history_bulk_data(parse_samples=STATS_WINDOW, context=ctx, history=h)
+        else:
+            ws = demo_sim.demo_history_window(STATS_WINDOW)
+            win = {
+                "pop_ping_latency_ms": [s["latencyMs"] for s in ws],
+                "pop_ping_drop_rate": [s["dropRate"] for s in ws],
+                "downlink_throughput_bps": [s["downMbps"] * 1e6 for s in ws],
+                "uplink_throughput_bps": [s["upMbps"] * 1e6 for s in ws],
+            }
+        assessment["netQuality"] = _stats_from_arrays(win)
+        assessment["netQuality"]["windowS"] = STATS_WINDOW
+    except Exception:  # noqa: BLE001 - stats must never break the assessment
+        assessment["netQuality"] = None
     if _db_ready:
         db.store_test(
             assessment["ts"], "full_diagnostic",
@@ -712,6 +830,114 @@ def _op_net_verdict(args):
     return dx.network_verdict(args.get("net") or {})
 
 
+# ── V2.2: long-range trends + CSV export (from the local DB) ─────────────
+TREND_WINDOWS = (("6h", 6 * 3600), ("24h", 24 * 3600), ("7d", 7 * 86400))
+OUTAGE_LOSS = 0.9      # samples at/above this drop rate count as outage
+
+
+def _trend_direction(first_avg, second_avg, tol_pct, higher_is_better=False):
+    """Compare the first-half mean to the second-half mean of a window."""
+    if first_avg is None or second_avg is None or first_avg <= 0:
+        return "stable"
+    delta = (second_avg - first_avg) / first_avg * 100.0
+    improved = delta < -tol_pct
+    degraded = delta > tol_pct
+    if higher_is_better:
+        improved, degraded = degraded, improved
+    if degraded:
+        return "degrading"
+    if improved:
+        return "improving"
+    return "stable"
+
+
+def _window_trend(rows):
+    """Aggregate one window of stored samples into trend metrics."""
+    n = len(rows)
+    if n == 0:
+        return {"samples": 0}
+    lat = [r.get("latency") for r in rows]
+    loss = [r.get("packetLoss") if r.get("packetLoss") is not None else 0.0 for r in rows]
+    down = [r.get("download") or 0.0 for r in rows]
+    up = [r.get("upload") or 0.0 for r in rows]
+    outages = 0
+    outage_s = 0
+    in_outage = False
+    for v in loss:
+        if v >= OUTAGE_LOSS:
+            if not in_outage:
+                outages += 1
+                in_outage = True
+            outage_s += 1
+        else:
+            in_outage = False
+    conn_lat = sorted(l for l, v in zip(lat, loss) if v < OUTAGE_LOSS and l is not None)
+    half = n // 2
+    lat_trend = down_trend = "stable"
+    if half >= 5:
+        def _mean(vals):
+            clean = [v for v in vals if v is not None]
+            return sum(clean) / len(clean) if clean else None
+        lat_trend = _trend_direction(
+            _mean(lat[:half]), _mean(lat[half:]), 10.0,
+        )
+        down_trend = _trend_direction(
+            _mean(down[:half]), _mean(down[half:]), 10.0, higher_is_better=True,
+        )
+    return {
+        "samples": n,
+        "availabilityPct": round(100.0 * (n - outage_s) / n, 2),
+        "outages": outages,
+        "outageSamplesS": outage_s,
+        "p50Ms": round(_pct(conn_lat, 50), 1) if conn_lat else None,
+        "p95Ms": round(_pct(conn_lat, 95), 1) if conn_lat else None,
+        "downAvgMbps": round(sum(down) / n, 2),
+        "upAvgMbps": round(sum(up) / n, 2),
+        "latencyTrend": lat_trend,
+        "downloadTrend": down_trend,
+    }
+
+
+def _op_trends(_args):
+    now = int(time.time())
+    out = {}
+    for key, seconds in TREND_WINDOWS:
+        rows = db.series(from_ts=now - seconds) if _db_ready else []
+        w = _window_trend(rows)
+        w["windowS"] = seconds
+        out[key] = w
+    return {"trends": out, "dbReady": _db_ready}
+
+
+def _op_export_csv(args):
+    hours = max(1, int(args.get("hours") or 24))
+    path = args.get("path")
+    if not path:
+        raise ValueError("export_csv requires 'path'")
+    now = int(time.time())
+    rows = db.series(from_ts=now - hours * 3600) if _db_ready else []
+    header = ("timestamp,datetime_iso,download_mbps,upload_mbps,"
+              "latency_ms,packet_loss_pct,gps,obstruction_pct,state")
+    lines = [header]
+    for r in rows:
+        ts = r.get("ts") or 0
+        obstr = r.get("obstruction")
+        lines.append(",".join([
+            str(ts),
+            time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)) if ts else "",
+            str(r.get("download") if r.get("download") is not None else ""),
+            str(r.get("upload") if r.get("upload") is not None else ""),
+            str(r.get("latency") if r.get("latency") is not None else ""),
+            str(round(100.0 * (r.get("packetLoss") or 0.0), 3)),
+            str(r.get("gps") or ""),
+            str(round(100.0 * obstr, 2)) if obstr is not None else "",
+            str(r.get("state") or ""),
+        ]))
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write("\n".join(lines) + "\n")
+    return {"path": path, "rows": len(rows), "hours": hours}
+
+
 _OPS = {
     "init": _op_init,
     "set_target": _op_set_target,
@@ -734,6 +960,8 @@ _OPS = {
     "alerts_log": _op_alerts_log,
     "trim": _op_trim,
     "net_verdict": _op_net_verdict,
+    "trends": _op_trends,
+    "export_csv": _op_export_csv,
     "shutdown": _op_shutdown,
 }
 

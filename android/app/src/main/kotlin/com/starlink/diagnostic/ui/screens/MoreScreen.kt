@@ -22,12 +22,16 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.DataObject
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -39,6 +43,7 @@ import com.starlink.diagnostic.ui.GlassCard
 import com.starlink.diagnostic.ui.MutedText
 import com.starlink.diagnostic.ui.SkySoft
 import com.starlink.diagnostic.ui.StrongText
+import com.starlink.diagnostic.ui.components.AboutDialog
 
 private data class MoreItem(
     val route: String,
@@ -50,6 +55,10 @@ private data class MoreItem(
 @Composable
 fun MoreScreen(vm: AppViewModel, nav: NavHostController) {
     val conn by vm.conn.collectAsState()
+    var showAbout by remember { mutableStateOf(false) }
+    if (showAbout) {
+        AboutDialog(onDismiss = { showAbout = false })
+    }
 
     val items = listOf(
         MoreItem("hardware", "HARDWARE", "خريطة العتاد الثمانية والأكواد المعلنة", Icons.Rounded.Memory),
@@ -91,6 +100,26 @@ fun MoreScreen(vm: AppViewModel, nav: NavHostController) {
                             Text(item.title, style = MaterialTheme.typography.titleMedium, color = StrongText)
                             Text(item.subtitle, style = MaterialTheme.typography.labelSmall, color = MutedText)
                         }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 5.dp)
+                    .clickable { showAbout = true },
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Info, contentDescription = "حول", tint = com.starlink.diagnostic.ui.SkyBlue)
+                    Column(Modifier.padding(start = 12.dp)) {
+                        Text("حول التطبيق", style = MaterialTheme.typography.titleMedium, color = StrongText)
+                        Text(
+                            "v2.2.0 — سجل الإصدارات، البروتوكول، دليل البدء",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedText,
+                        )
                     }
                 }
             }

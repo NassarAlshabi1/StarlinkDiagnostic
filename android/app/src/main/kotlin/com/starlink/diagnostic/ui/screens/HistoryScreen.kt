@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -30,6 +31,7 @@ import com.starlink.diagnostic.ui.GlassCard
 import com.starlink.diagnostic.ui.GoodGreen
 import com.starlink.diagnostic.ui.KVRow
 import com.starlink.diagnostic.ui.LineChart
+import com.starlink.diagnostic.ui.MetricCard
 import com.starlink.diagnostic.ui.MutedText
 import com.starlink.diagnostic.ui.SelectChip
 import com.starlink.diagnostic.ui.SkyBlue
@@ -40,10 +42,22 @@ import com.starlink.diagnostic.ui.formatTsAr
 import com.starlink.diagnostic.ui.formatTsMsAr
 import com.starlink.diagnostic.ui.statusColor
 
+/** V2.2 — colored arrow + label for a trend direction. */
+private fun trendAr(direction: String?): Pair<String, Color> = when (direction) {
+    "improving" -> "تحسن" to GoodGreen
+    "degrading" -> "تراجع" to BadRed
+    else -> "مستقر" to MutedText
+}
+
 @Composable
 fun HistoryScreen(vm: AppViewModel) {
     val hist by vm.history.collectAsState()
+    val trends by vm.trends.collectAsState()
+    val csv by vm.csv.collectAsState()
     val windowHours = androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(24) }
+
+    // V2.2: load long-range trends once when the screen opens
+    LaunchedEffect(Unit) { vm.loadTrends() }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF0B1026))) {
         Column(
@@ -71,15 +85,99 @@ fun HistoryScreen(vm: AppViewModel) {
             }
             Spacer(Modifier.height(8.dp))
 
-            androidx.compose.material3.Button(
-                onClick = { vm.loadHistory(windowHours.intValue) },
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = SkyBlue,
-                ),
-            ) {
-                Text("تحديث", color = Color(0xFF06263B))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.Button(
+                    onClick = { vm.loadHistory(windowHours.intValue) },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = SkyBlue,
+                    ),
+                ) {
+                    Text("تحديث", color = Color(0xFF06263B))
+                }
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { vm.exportCsv(windowHours.intValue) },
+                    enabled = !csv.exporting,
+                ) {
+                    Text(
+                        if (csv.exporting) "جارٍ التصدير…" else "تصدير CSV",
+                        color = if (csv.exporting) MutedText else SkySoft,
+                    )
+                }
+            }
+            csv.lastFileAr?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = GoodGreen)
+            }
+            csv.errorAr?.let {
+                Spacer(Modifier.height(6.dp))
+                Text("فشل التصدير: $it", style = MaterialTheme.typography.labelSmall, color = BadRed)
             }
             Spacer(Modifier.height(12.dp))
+
+            // ── V2.2: long-range trends (24 h primary + 6 h / 7 d) ──────
+            trends.trends?.let { td ->
+                val w = td.w24h
+                if (w.empty) {
+                    GlassCard {
+                        Text(
+                            "الاتجاهات طويلة المدى تُحسب من السجل المحلي — شغّل المراقبة لتجميع البيانات",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MutedText,
+                        )
+                    }
+                } else {
+                    val (latLabel, latColor) = trendAr(w.latencyTrend)
+                    val (dlLabel, dlColor) = trendAr(w.downloadTrend)
+                    GlassCard {
+                        Text(
+                            "الاتجاهات — آخر 24 ساعة",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = StrongText,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            MetricCard(
+                                "التوفر", "%.2f%%".format(w.availabilityPct ?: 0.0),
+                                accent = if ((w.availabilityPct ?: 100.0) >= 99.0) GoodGreen
+                                else if ((w.availabilityPct ?: 100.0) >= 95.0) WarnAmber else BadRed,
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricCard(
+                                "انقطاعات", "${w.outages ?: 0}",
+                                accent = if ((w.outages ?: 0) == 0) GoodGreen else WarnAmber,
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricCard(
+                                "p95 الكمون", w.p95Ms?.let { "%.0f ms".format(it) } ?: "—",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        KVRow("اتجاه الكمون", latLabel, valueColor = latColor)
+                        KVRow("اتجاه التنزيل", dlLabel, valueColor = dlColor)
+                        KVRow("متوسط التنزيل", w.downAvgMbps?.let { "%.2f Mbps".format(it) } ?: "—")
+                        KVRow("عينات النافذة", "${w.samples}")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("6 ساعات" to td.w6h, "7 أيام" to td.w7d).forEach { (label, win) ->
+                            GlassCard(modifier = Modifier.weight(1f)) {
+                                Text(label, style = MaterialTheme.typography.labelMedium, color = SkySoft)
+                                Spacer(Modifier.height(4.dp))
+                                if (win.empty) {
+                                    Text("لا بيانات", style = MaterialTheme.typography.labelSmall, color = MutedText)
+                                } else {
+                                    KVRow("توفر", "%.2f%%".format(win.availabilityPct ?: 0.0))
+                                    KVRow("انقطاعات", "${win.outages ?: 0}")
+                                    val (ll, lc) = trendAr(win.latencyTrend)
+                                    KVRow("كمون", ll, valueColor = lc)
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
 
             hist.errorAr?.let {
                 Surface(

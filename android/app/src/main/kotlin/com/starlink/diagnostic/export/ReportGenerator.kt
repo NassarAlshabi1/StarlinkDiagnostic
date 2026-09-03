@@ -222,6 +222,61 @@ object ReportGenerator {
             input.netVerdictAr?.let {
                 kv("Network Path", BidiFormatter.getInstance().unicodeWrap(it))
             }
+
+            // ── V2.2: precision window stats ─────────────────────────────
+            a.netQuality?.let { nq ->
+                sectionTitle("Network Quality (window)")
+                kv("Window Samples", "${nq.n}" +
+                    (nq.nLat?.let { " (latency available: $it)" } ?: ""))
+                nq.p50Ms?.let { kv("Latency p50", String.format(Locale.US, "%.1f ms", it)) }
+                nq.p95Ms?.let { kv("Latency p95", String.format(Locale.US, "%.1f ms", it)) }
+                nq.p99Ms?.let { kv("Latency p99", String.format(Locale.US, "%.1f ms", it)) }
+                nq.jitterMs?.let { kv("Jitter", String.format(Locale.US, "%.1f ms", it)) }
+                nq.lossPct?.let { kv("Window Loss", String.format(Locale.US, "%.2f%%", it)) }
+                nq.downMbpsAvg?.let { kv("Avg Download", String.format(Locale.US, "%.2f Mbps", it)) }
+                nq.upMbpsAvg?.let { kv("Avg Upload", String.format(Locale.US, "%.2f Mbps", it)) }
+            }
+        }
+
+        // ── V2.2: v42 evidence surface (from the live status) ────────────
+        input.status?.let { st ->
+            val hasEvidence = st.outage != null || st.disablementAr != null ||
+                st.softwareUpdateStateAr != null || st.alignment != null ||
+                st.power?.dishW != null
+            if (hasEvidence) {
+                newPageIfFooter()
+                sectionTitle("V42 Evidence (live status)")
+                st.outage?.let { o ->
+                    kv("Outage", if (o.ongoing) "ONGOING" else "COMPLETED")
+                    kv("Outage Cause", o.causeAr)
+                    o.durationS?.let { kv("Outage Duration", String.format(Locale.US, "%.0f s", it)) }
+                }
+                st.disablementAr?.let { kv("Disablement", it) }
+                st.softwareUpdateStateAr?.let { kv("Software Update", it) }
+                if (st.swupdateRebootReady == true) kv("Update Reboot Ready", "YES", AMBER)
+                st.dlRestrictedAr?.let { kv("Downlink Restriction", it) }
+                st.ulRestrictedAr?.let { kv("Uplink Restriction", it) }
+                st.alignment?.let { al ->
+                    kv("Attitude State", al.attitudeState ?: "—")
+                    al.desiredAzimuthDeg?.let {
+                        kv("Desired Boresight Az", String.format(Locale.US, "%.1f deg", it))
+                    }
+                    al.desiredElevationDeg?.let {
+                        kv("Desired Boresight El", String.format(Locale.US, "%.1f deg", it))
+                    }
+                    al.boresightAzimuthDeg?.let {
+                        kv("Current Boresight Az", String.format(Locale.US, "%.1f deg", it))
+                    }
+                    al.boresightElevationDeg?.let {
+                        kv("Current Boresight El", String.format(Locale.US, "%.1f deg", it))
+                    }
+                    al.tiltAngleDeg?.let {
+                        kv("Tilt Angle", String.format(Locale.US, "%.1f deg", it))
+                    }
+                }
+                st.power?.dishW?.let { kv("Dish Power Draw", String.format(Locale.US, "%.1f W", it)) }
+                st.power?.routerW?.let { kv("Router Power Draw", String.format(Locale.US, "%.1f W", it)) }
+            }
         }
 
         // ── Footer ──────────────────────────────────────────────────────
