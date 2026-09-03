@@ -39,7 +39,6 @@ import com.starlink.diagnostic.ui.SkySoft
 import com.starlink.diagnostic.ui.StrongText
 import com.starlink.diagnostic.ui.WarnAmber
 import com.starlink.diagnostic.ui.formatUptimeAr
-import androidx.compose.foundation.layout.Arrangement
 
 @Composable
 fun LiveMonitorScreen(vm: AppViewModel) {
